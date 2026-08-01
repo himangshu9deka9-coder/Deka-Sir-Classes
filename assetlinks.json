@@ -1,8 +1,0 @@
-[{
-      "relation": ["delegate_permission/common.handle_all_urls"],
-      "target": {
-        "namespace": "android_app",
-        "package_name": "in.dekasirclasses.twa",
-        "sha256_cert_fingerprints": ["30:3F:79:56:F8:79:5A:0B:23:9A:1C:E7:2B:EF:F5:AF:AE:9C:BF:C0:2D:FD:89:5C:03:B6:6F:3A:B3:E0:47:3E"]
-      }
-    }]
