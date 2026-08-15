@@ -582,6 +582,22 @@
             max-width: 100%;
             min-height: calc(100vh - var(--header-height));
             transition: var(--transition);
+            position: relative;
+            overflow-x: hidden;
+        }
+        /* ============================================================
+        SLIDE NAVIGATION ENGINE — overlay layers used to animate page
+        and folder transitions (see DSCNav in the script below).
+        ============================================================ */
+        .dsc-nav-dim {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #000;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .dsc-anim-in {
+            animation: none !important;
         }
         /* Extra bottom clearance so page content and the WhatsApp FAB
            never sit underneath the footer nav that's shown to
@@ -1392,6 +1408,78 @@
             align-items: center;
             gap: 8px;
             flex-shrink: 0;
+        }
+        /* Two-line mock test header: row1 = test title (full width,
+           centered); row2 = Language toggle, Day/Night toggle, live
+           time, Close button, in that left-to-right order. */
+        .tt-topbar-2line {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+            padding: 10px 14px 10px;
+        }
+        .tt-topbar-row1 {
+            text-align: center;
+            min-width: 0;
+        }
+        .tt-topbar-row1 .tt-title {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .tt-topbar-row2 {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .tt-theme-toggle {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            border: none;
+            background: var(--glass-bg);
+            color: var(--text-primary);
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .tt-theme-toggle:hover { filter: brightness(1.08); }
+        .tt-time-display {
+            background: linear-gradient(135deg, rgba(220,38,38,0.18), rgba(220,38,38,0.06));
+            border: 1px solid rgba(220, 38, 38, 0.35);
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-weight: 700;
+            color: #fca5a5;
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .tt-close-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            border: none;
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: #fff;
+            font-size: 15px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-left: auto;
+            box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
+        }
+        .tt-close-btn:hover { filter: brightness(1.08); }
+        @media (max-width: 380px) {
+            .tt-topbar-row2 { gap: 7px; }
+            .tt-time-display { padding: 6px 10px; font-size: 12px; }
         }
         .tt-timer {
             background: linear-gradient(135deg, rgba(220,38,38,0.18), rgba(220,38,38,0.06));
@@ -3523,15 +3611,17 @@
 
     <!-- ===== FULL-SCREEN MOCK TEST TAKING VIEW ===== -->
     <div id="testTakeOverlay" class="test-take-overlay">
-        <div class="tt-topbar">
-            <div class="tt-topbar-left">
-                <button class="tt-pause-btn" onclick="requestExitTest()" aria-label="Pause test" title="Pause test"><i class="fas fa-pause"></i> <span id="ttPauseTimer">00:00</span></button>
-            </div>
-            <div class="tt-topbar-center">
+        <div class="tt-topbar tt-topbar-2line">
+            <div class="tt-topbar-row1">
                 <span class="tt-title" id="ttTitle"></span>
             </div>
-            <div class="tt-topbar-right">
+            <div class="tt-topbar-row2">
                 <span id="ttLangToggle"></span>
+                <button class="tt-theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme" title="Toggle theme">
+                    <i class="fas fa-moon theme-icon theme-toggle-icon"></i>
+                </button>
+                <span class="tt-time-display" id="ttPauseTimer">00:00</span>
+                <button class="tt-close-btn" onclick="requestExitTest()" aria-label="Close test" title="Close test"><i class="fas fa-times"></i></button>
             </div>
         </div>
         <div class="tt-palette-strip-wrap">
@@ -5571,6 +5661,227 @@
             }
         }
 
+        // ================================================================
+        // SLIDE NAVIGATION ENGINE
+        // ================================================================
+        // Animates every page/folder change in .main-content as an
+        // iOS-style push/pop slide, and drives a left-edge swipe-back
+        // gesture — needed because this app runs standalone (installed
+        // PWA) on both Android and iPhone, where there is no OS-level
+        // back-swipe animation to piggyback on at all (iOS standalone has
+        // none whatsoever; Android's predictive-back only exists inside
+        // an actual browser tab). direction is 'forward' (new screen
+        // slides in from the right, current screen recedes left with a
+        // parallax dim — going deeper) or 'back' (new screen slides in
+        // from the left/underneath, current screen exits fully to the
+        // right — retracing, always ending at Dashboard same as "Home").
+        const DSCNav = (function () {
+            const DURATION = 320;
+            let animating = false;
+            let liveDrag = null;
+            let pendingContinuation = null; // {dx, width} handed off from a committed swipe
+
+            function mainEl() { return document.querySelector('.main-content'); }
+
+            function reduceMotion() {
+                try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+                catch (_) { return false; }
+            }
+
+            // Duplicate ids on a detached snapshot clone would confuse any
+            // getElementById lookup that happens to run while it's still
+            // attached (it lives in the DOM briefly, just visually on
+            // top) — strip them, the clone is purely decorative.
+            function stripIds(node) {
+                node.removeAttribute('id');
+                node.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+            }
+
+            function makeClone(prevActive, rect) {
+                const clone = prevActive.cloneNode(true);
+                stripIds(clone);
+                clone.classList.add('active');
+                clone.style.position = 'absolute';
+                clone.style.top = '0';
+                clone.style.left = '0';
+                clone.style.width = rect.width + 'px';
+                clone.style.margin = '0';
+                clone.style.pointerEvents = 'none';
+                return clone;
+            }
+
+            function transition(direction, mutateFn) {
+                const el = mainEl();
+                if (!el || animating || liveDrag || reduceMotion()) { mutateFn(); return; }
+                const prevActive = el.querySelector('.page-section.active');
+                if (!prevActive) { mutateFn(); return; }
+
+                animating = true;
+                const rect = prevActive.getBoundingClientRect();
+                const clone = makeClone(prevActive, rect);
+                const dim = document.createElement('div');
+                dim.className = 'dsc-nav-dim';
+                el.appendChild(clone);
+                el.appendChild(dim);
+
+                mutateFn();
+
+                const newActive = el.querySelector('.page-section.active');
+                const sameNode = !newActive || newActive === clone;
+
+                let startCloneX = '0px';
+                if (direction === 'back' && pendingContinuation) {
+                    startCloneX = pendingContinuation.dx + 'px';
+                }
+                pendingContinuation = null;
+
+                const endCloneX = direction === 'forward' ? '-30%' : '100%';
+                const startNewX = direction === 'forward' ? '100%' : '-30%';
+                const dimStart = direction === 'forward' ? 0 : 0.18;
+                const dimEnd = direction === 'forward' ? 0.18 : 0;
+
+                clone.style.transform = `translateX(${startCloneX})`;
+                clone.style.zIndex = direction === 'forward' ? '1' : '3';
+                dim.style.opacity = String(dimStart);
+                dim.style.zIndex = '2';
+
+                if (!sameNode) {
+                    newActive.style.position = 'relative';
+                    newActive.style.zIndex = direction === 'forward' ? '3' : '1';
+                    newActive.style.transform = `translateX(${startNewX})`;
+                    newActive.classList.add('dsc-anim-in');
+                }
+
+                void el.offsetHeight; // reflow before enabling transitions
+
+                clone.style.transition = `transform ${DURATION}ms cubic-bezier(.22,.61,.36,1)`;
+                dim.style.transition = `opacity ${DURATION}ms cubic-bezier(.22,.61,.36,1)`;
+                if (!sameNode) newActive.style.transition = `transform ${DURATION}ms cubic-bezier(.22,.61,.36,1)`;
+
+                requestAnimationFrame(() => {
+                    clone.style.transform = `translateX(${endCloneX})`;
+                    dim.style.opacity = String(dimEnd);
+                    if (!sameNode) newActive.style.transform = 'translateX(0)';
+                });
+
+                setTimeout(() => {
+                    clone.remove();
+                    dim.remove();
+                    if (!sameNode) {
+                        newActive.style.position = '';
+                        newActive.style.zIndex = '';
+                        newActive.style.transform = '';
+                        newActive.style.transition = '';
+                        newActive.classList.remove('dsc-anim-in');
+                    }
+                    animating = false;
+                }, DURATION + 40);
+            }
+
+            // ---- Interactive left-edge swipe-back ----
+            const EDGE = 24;
+            const COMMIT_RATIO = 0.32;
+
+            function blockingOverlayOpen() {
+                const ids = ['testTakeOverlay', 'myAccountOverlay', 'pdfViewerOverlay', 'reviewOverlay', 'resultsOverlay', 'qnaOverlay', 'videoPlayerOverlay', 'modalOverlay', 'pdfViewerOverlay', 'loginOverlay'];
+                return ids.some(id => document.getElementById(id)?.classList.contains('open'));
+            }
+
+            function canSwipeBack() {
+                if (animating || liveDrag) return false;
+                if (typeof awayFromDashboard === 'undefined' || !awayFromDashboard) return false;
+                if (blockingOverlayOpen()) return false;
+                if (document.getElementById('sidebar')?.classList.contains('open')) return false;
+                return true;
+            }
+
+            function onTouchStart(e) {
+                if (!canSwipeBack()) return;
+                const t = e.touches[0];
+                if (!t || t.clientX > EDGE) return;
+                const el = mainEl();
+                const prevActive = el && el.querySelector('.page-section.active');
+                if (!el || !prevActive) return;
+
+                const rect = prevActive.getBoundingClientRect();
+                const clone = makeClone(prevActive, rect);
+                clone.style.zIndex = '3';
+                const dim = document.createElement('div');
+                dim.className = 'dsc-nav-dim';
+                dim.style.zIndex = '1';
+                dim.style.opacity = '0.18';
+                el.appendChild(dim);
+                el.appendChild(clone);
+
+                liveDrag = {
+                    startX: t.clientX,
+                    lastDx: 0,
+                    width: rect.width || window.innerWidth,
+                    el, clone, dim
+                };
+            }
+
+            function onTouchMove(e) {
+                if (!liveDrag) return;
+                const t = e.touches[0];
+                if (!t) return;
+                const dx = Math.max(0, t.clientX - liveDrag.startX);
+                liveDrag.lastDx = dx;
+                liveDrag.clone.style.transform = `translateX(${dx}px)`;
+                liveDrag.dim.style.opacity = String(Math.max(0, 0.18 * (1 - dx / liveDrag.width)));
+            }
+
+            function onTouchEnd() {
+                if (!liveDrag) return;
+                const drag = liveDrag;
+                const ratio = drag.lastDx / drag.width;
+
+                if (ratio > COMMIT_RATIO || drag.lastDx > 90) {
+                    // Hand the current visual offset off to the real
+                    // 'back' transition (fired by history.back() below)
+                    // so it continues smoothly from here instead of
+                    // snapping back to a standing start.
+                    pendingContinuation = { dx: drag.lastDx, width: drag.width };
+                    drag.clone.remove();
+                    drag.dim.remove();
+                    liveDrag = null;
+                    window.history.back();
+                } else {
+                    drag.clone.style.transition = 'transform 200ms ease-out';
+                    drag.dim.style.transition = 'opacity 200ms ease-out';
+                    drag.clone.style.transform = 'translateX(0)';
+                    drag.dim.style.opacity = '0.18';
+                    setTimeout(() => {
+                        drag.clone.remove();
+                        drag.dim.remove();
+                        liveDrag = null;
+                    }, 200);
+                }
+            }
+
+            document.addEventListener('touchstart', onTouchStart, { passive: true });
+            document.addEventListener('touchmove', onTouchMove, { passive: true });
+            document.addEventListener('touchend', onTouchEnd, { passive: true });
+            document.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
+            return { transition };
+        })();
+
+        // Works out whether a navigateTo/activateTab call is heading
+        // deeper ('forward' — new folder, new page away from Dashboard)
+        // or retracing to somewhere already in the current trail
+        // ('back' — an ancestor folder, or Dashboard itself), purely by
+        // checking the existing navBreadcrumbs trail — no separate
+        // bookkeeping needed. Dashboard is always 'back', matching how
+        // it behaves as this app's "Home".
+        function computeNavDirection(page, folderId) {
+            if (page === 'dashboard') return 'back';
+            if (!awayFromDashboard) return 'forward';
+            const idx = navBreadcrumbs.findIndex(e => breadcrumbsMatch(e, { type: 'page', page, folderId }));
+            if (idx === -1 || idx === navBreadcrumbs.length - 1) return 'forward';
+            return 'back';
+        }
+
         // Re-displays one entry from navBreadcrumbs (used only when
         // retracing backward via the popstate handler — forward
         // navigation always renders through its own normal call sites).
@@ -5580,20 +5891,22 @@
         function renderBreadcrumbEntry(entry, push) {
             let hash, stateObj;
             if (entry.type === 'page') {
-                renderView(entry.page, entry.folderId);
+                renderView(entry.page, entry.folderId, 'back');
                 currentPage = entry.page;
                 currentFolderId = entry.folderId;
                 hash = '#' + entry.page + (entry.folderId ? '/' + entry.folderId : '');
                 stateObj = { page: entry.page, folderId: entry.folderId };
             } else if (entry.type === 'courseNav') {
-                courseDetailState.courseId = entry.courseId;
-                courseDetailState.moduleType = entry.moduleType;
-                courseDetailState.folderId = entry.folderId;
-                courseDetailState.materialMode = entry.materialMode;
-                courseDetailState.view = entry.moduleType ? 'browse' : 'modules';
-                document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
-                document.getElementById('page-courseDetail').classList.add('active');
-                renderCourseDetailRoot();
+                DSCNav.transition('back', () => {
+                    courseDetailState.courseId = entry.courseId;
+                    courseDetailState.moduleType = entry.moduleType;
+                    courseDetailState.folderId = entry.folderId;
+                    courseDetailState.materialMode = entry.materialMode;
+                    courseDetailState.view = entry.moduleType ? 'browse' : 'modules';
+                    document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
+                    document.getElementById('page-courseDetail').classList.add('active');
+                    renderCourseDetailRoot();
+                });
                 hash = '#course/' + entry.courseId;
                 stateObj = {
                     courseNav: true, courseId: entry.courseId, moduleType: entry.moduleType,
@@ -5679,11 +5992,16 @@
             isNavigating = true;
 
             try {
+                // Must run before updateLocation() — it mutates
+                // navBreadcrumbs, which this reads to tell a deeper hop
+                // from a retrace to an ancestor already in the trail.
+                const direction = computeNavDirection(page, folderId);
+
                 if (pushState) {
                     updateLocation(page, folderId);
                 }
 
-                renderView(page, folderId);
+                renderView(page, folderId, direction);
                 guardAgainstGhostClick();
                 if (page === 'dashboard') armDashboardExitGuard();
 
@@ -5736,7 +6054,7 @@
             try {
                 navBreadcrumbs = [];
                 updateLocation(page, null);
-                renderView(page, null);
+                renderView(page, null, page === 'dashboard' ? 'back' : 'forward');
                 guardAgainstGhostClick();
                 if (page === 'dashboard') armDashboardExitGuard();
                 document.querySelectorAll('.sidebar-nav a, .bottom-nav a').forEach(el => el.classList.remove('active'));
@@ -5751,35 +6069,36 @@
             }
         }
 
-        function renderView(page, folderId) {
-            document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
-            const target = document.getElementById('page-' + page);
-            if (target) target.classList.add('active');
+        function renderView(page, folderId, direction = 'forward') {
+            DSCNav.transition(direction, () => {
+                document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
+                const target = document.getElementById('page-' + page);
+                if (target) target.classList.add('active');
 
-            // Day/night toggle lives on the main Dashboard only — every
-            // other page (and every full-screen overlay, which sits above
-            // the header entirely) hides it.
-            const themeBtn = document.getElementById('themeToggleHeader');
-            if (themeBtn) themeBtn.style.display = page === 'dashboard' ? 'flex' : 'none';
+                // Day/night toggle now shows on every page's header (used to
+                // be Dashboard-only).
+                const themeBtn = document.getElementById('themeToggleHeader');
+                if (themeBtn) themeBtn.style.display = 'flex';
 
-            if (page === 'dashboard') renderDashboard();
-            else if (page === 'materials') {
-                renderMaterialFolders(folderId);
-            } else if (page === 'tests') {
-                renderTestFolders(folderId);
-                renderTests(folderId);
-            } else if (page === 'recorded') {
-                renderRecordedFolders(folderId);
-                renderVideos(folderId);
-            } else if (page === 'results') renderResults();
-            else if (page === 'courses') renderCoursesSection(getStore(), currentUser?.role === 'admin');
-            else if (page === 'courseDetail') renderCourseDetailRoot();
-            else if (page === 'admin') {
-                renderAdminTests();
-                renderFolderManage();
-                buildQuestionInputs();
-                populateFolderSelects();
-            } else if (page === 'builder') { /* handled */ }
+                if (page === 'dashboard') renderDashboard();
+                else if (page === 'materials') {
+                    renderMaterialFolders(folderId);
+                } else if (page === 'tests') {
+                    renderTestFolders(folderId);
+                    renderTests(folderId);
+                } else if (page === 'recorded') {
+                    renderRecordedFolders(folderId);
+                    renderVideos(folderId);
+                } else if (page === 'results') renderResults();
+                else if (page === 'courses') renderCoursesSection(getStore(), currentUser?.role === 'admin');
+                else if (page === 'courseDetail') renderCourseDetailRoot();
+                else if (page === 'admin') {
+                    renderAdminTests();
+                    renderFolderManage();
+                    buildQuestionInputs();
+                    populateFolderSelects();
+                } else if (page === 'builder') { /* handled */ }
+            });
         }
 
         // Set right before any deliberate (button-click, not physical
@@ -5928,7 +6247,7 @@
                     window.history.go(-20);
                     return;
                 }
-                renderView('dashboard', null);
+                renderView('dashboard', null, 'back');
                 currentPage = 'dashboard';
                 currentFolderId = null;
                 awayFromDashboard = false;
@@ -5955,7 +6274,7 @@
                 return;
             }
             awayFromDashboard = false;
-            renderView('dashboard', null);
+            renderView('dashboard', null, 'back');
             currentPage = 'dashboard';
             currentFolderId = null;
             armDashboardExitGuard();
