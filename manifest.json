@@ -4,7 +4,7 @@
   "description": "Mock tests and study material for DEKA SIR CLASSES students",
   "start_url": "./index.html",
   "scope": "./",
-  "display": "standalone",
+  "display": "fullscreen",
   "orientation": "portrait-primary",
   "background_color": "#0f0f14",
   "theme_color": "#0f0f14",
