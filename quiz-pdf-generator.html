@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>প্ৰশ্নপত্ৰ · Question Paper Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --navy:#101d33;
+    --navy-2:#182948;
+    --navy-3:#22355c;
+    --ivory:#f7f3e8;
+    --paper:#fffdf7;
+    --gold:#c9a227;
+    --gold-soft:#e4c766;
+    --ink:#1c1a15;
+    --ink-soft:#5b5646;
+    --rule:#dcd4bc;
+    --danger:#c0463b;
+    --ok:#2f6b45;
+  }
+  *{box-sizing:border-box;}
+  @page{ size:A4; margin:12mm; }
+  body{margin:0;font-family:'Inter',sans-serif;background:var(--navy);color:var(--ink);}
+  .app{display:flex;min-height:100vh;}
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{
+    width:380px;flex:0 0 380px;background:var(--navy);color:#eef0f5;
+    padding:28px 24px 40px;overflow-y:auto;max-height:100vh;position:sticky;top:0;
+    border-right:1px solid var(--navy-3);
+  }
+  .brand{display:flex;align-items:baseline;gap:10px;margin-bottom:4px;}
+  .brand .as{font-family:'Noto Sans Bengali',sans-serif;font-size:22px;font-weight:700;color:var(--gold-soft);}
+  .brand .en{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#8b93a8;}
+  .tagline{font-size:12.5px;color:#8b93a8;margin-bottom:26px;line-height:1.5;}
+
+  .section{margin-bottom:24px;padding-bottom:22px;border-bottom:1px solid var(--navy-3);}
+  .section:last-of-type{border-bottom:none;}
+  .section-label{
+    font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--gold-soft);margin-bottom:12px;display:flex;align-items:center;gap:8px;
+  }
+  .section-label::after{content:"";flex:1;height:1px;background:var(--navy-3);}
+
+  label.field-label{display:block;font-size:12.5px;color:#c3c9d9;margin:0 0 6px;}
+  textarea, input[type=text]{
+    width:100%;background:var(--navy-2);border:1px solid var(--navy-3);color:#f2f3f7;
+    border-radius:8px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:12.5px;
+    resize:vertical;outline:none;transition:border-color .15s;
+  }
+  input[type=text]{font-family:'Inter',sans-serif;font-size:13px;}
+  textarea:focus, input[type=text]:focus{border-color:var(--gold);}
+  textarea#jsonInput{height:210px;line-height:1.5;}
+  .file-btn{
+    display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#c3c9d9;
+    background:transparent;border:1px dashed var(--navy-3);border-radius:8px;padding:8px 10px;
+    cursor:pointer;width:100%;justify-content:center;
+  }
+  .file-btn:hover{border-color:var(--gold);color:var(--gold-soft);}
+  #fileInput{display:none;}
+
+  .err{color:#ff9b8f;font-size:12px;margin-top:8px;display:none;font-family:'JetBrains Mono',monospace;}
+  .ok-msg{color:#8fd4a3;font-size:12px;margin-top:8px;display:none;}
+
+  .field-gap{margin-bottom:14px;}
+
+  .toggle-row{display:flex;gap:8px;}
+  .toggle-btn{
+    flex:1;padding:9px 6px;text-align:center;border-radius:8px;border:1px solid var(--navy-3);
+    background:var(--navy-2);color:#c3c9d9;cursor:pointer;font-size:13px;font-weight:600;transition:.15s;
+  }
+  .toggle-btn.active{background:var(--gold);border-color:var(--gold);color:var(--navy);}
+  .toggle-btn .sub{display:block;font-size:10px;font-weight:400;opacity:.75;}
+
+  .switch-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;font-size:13px;color:#dfe2ec;}
+  .switch{position:relative;width:38px;height:22px;flex:0 0 38px;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;background:var(--navy-3);border-radius:20px;cursor:pointer;transition:.15s;}
+  .slider::before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:#c3c9d9;border-radius:50%;transition:.15s;}
+  input:checked + .slider{background:var(--gold);}
+  input:checked + .slider::before{transform:translateX(16px);background:var(--navy);}
+
+  .range-row{margin-top:10px;}
+  .range-row input[type=range]{width:100%;accent-color:var(--gold);}
+  .range-row .rv{font-size:11px;color:#8b93a8;font-family:'JetBrains Mono',monospace;}
+
+  .actions{position:sticky;bottom:-40px;margin-top:8px;}
+  .btn{
+    width:100%;padding:13px 14px;border-radius:9px;border:none;font-weight:700;font-size:14px;
+    cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s;
+  }
+  .btn-preview{background:var(--navy-2);color:#eef0f5;border:1px solid var(--gold);margin-bottom:10px;}
+  .btn-preview:hover{background:var(--navy-3);}
+  .btn-pdf{background:linear-gradient(180deg,var(--gold-soft),var(--gold));color:var(--navy);}
+  .btn-pdf:hover{filter:brightness(1.06);}
+  .hint-note{font-size:11px;color:#8b93a8;margin-top:10px;line-height:1.5;}
+
+  /* ---------- Preview pane ---------- */
+  .preview-wrap{flex:1;background:var(--ivory);padding:40px 30px;overflow-y:auto;display:flex;flex-direction:column;align-items:center;}
+  .empty-state{margin-top:120px;text-align:center;color:#8a8367;max-width:340px;}
+  .empty-state .as{font-family:'Noto Sans Bengali',sans-serif;font-size:24px;color:#a89a55;margin-bottom:10px;}
+  .empty-state p{font-size:13.5px;line-height:1.6;}
+
+  #printArea{width:100%;max-width:794px;}
+  .page{
+    background:var(--paper);width:100%;position:relative;
+    box-shadow:0 10px 32px rgba(16,29,51,.18);margin-bottom:14px;
+    border:1px solid #eee6cf;overflow:hidden;
+    display:flex;flex-direction:column;
+  }
+
+  /* Brand badge (logo image if uploaded, else a drawn "D" monogram) */
+  .brand-badge{
+    width:50px;height:50px;border-radius:50%;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;object-fit:contain;
+    background:var(--navy);border:2px solid var(--gold);color:var(--gold-soft);
+    font-family:'Noto Serif',serif;font-weight:700;font-style:italic;font-size:22px;
+  }
+  .brand-badge img{width:100%;height:100%;object-fit:contain;border-radius:50%;}
+
+  /* Compact repeating brand strip on every question page */
+  .doc-header{
+    flex:0 0 auto;padding:16px 56px 14px;border-bottom:2px solid var(--gold);
+    display:flex;justify-content:space-between;align-items:center;gap:16px;position:relative;z-index:2;
+    background:var(--paper);
+  }
+  .doc-header .h-left{display:flex;align-items:center;gap:12px;min-width:0;}
+  .doc-header .h-brandcol{line-height:1.2;}
+  .doc-header .h-estd{font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);}
+  .doc-header .h-brand{font-family:'Inter',sans-serif;font-weight:800;font-size:13px;letter-spacing:.02em;color:#e0562f;}
+  .doc-header .h-text{font-family:'Noto Serif',serif;font-weight:700;font-size:14.5px;color:var(--navy);line-height:1.3;margin-left:14px;padding-left:14px;border-left:1px solid var(--rule);}
+  .doc-header .h-text.as{font-family:'Noto Sans Bengali',sans-serif;}
+  .doc-header .h-meta{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);flex:0 0 auto;white-space:nowrap;}
+  .doc-body{flex:1 1 auto;padding:26px 56px;position:relative;}
+  .content-footer{
+    display:flex;align-items:center;justify-content:center;gap:10px;
+    padding:14px 40px;border-top:1px solid var(--rule);background:var(--paper);
+    font-family:'Inter',sans-serif;font-weight:700;font-size:12px;color:var(--navy);
+  }
+  .content-footer .mini-badge{
+    width:26px;height:26px;border-radius:50%;background:#fff;border:1.5px solid var(--rule);
+    display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto;
+  }
+  .content-footer .mini-badge img{width:100%;height:100%;object-fit:contain;}
+  .content-footer .mini-badge span{font-family:'Noto Serif',serif;font-weight:700;font-style:italic;color:var(--navy);font-size:13px;}
+  .content-footer a{color:var(--navy);text-decoration:underline;}
+  @media print{
+    .content-footer{
+      position:fixed;left:0;right:0;bottom:0;z-index:-1;
+    }
+    .content-page .doc-body{padding-bottom:56px;}
+    .cover-page{height:273mm;min-height:0;}
+  }
+  .doc-footer{
+    flex:0 0 auto;padding:12px 56px 18px;border-top:1px solid var(--rule);
+    display:grid;grid-template-columns:1fr auto 1fr;align-items:center;
+    position:relative;z-index:2;background:var(--paper);
+  }
+  .footer-link{
+    grid-column:2;justify-self:center;font-family:'Inter',sans-serif;font-weight:700;font-size:13px;
+    color:var(--navy);text-decoration:none;letter-spacing:.02em;border-bottom:1.5px solid var(--gold);padding-bottom:1px;
+  }
+  .footer-pageno{grid-column:3;justify-self:end;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-soft);}
+
+  /* Cover page — plain and simple, matching the clean look of the question
+     pages. No colored banner, no watermark — just badge, title, links. */
+  .cover-page{padding:48px 50px 0;display:flex;flex-direction:column;min-height:760px;}
+  .cover-badge-wrap{display:flex;justify-content:center;margin-bottom:14px;}
+  .cover-badge{
+    width:220px;height:220px;border-radius:50%;border:5px solid var(--navy);background:#fff;
+    display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto;
+  }
+  .cover-badge img{width:100%;height:100%;object-fit:contain;}
+  .cover-badge .fallback-d{font-family:'Noto Serif',serif;font-weight:700;font-style:italic;font-size:96px;color:var(--navy);}
+
+  .cover-body{flex:1 1 auto;text-align:center;position:relative;}
+  .cover-estd{font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:var(--ink-soft);}
+  .cover-brand{font-family:'Inter',sans-serif;font-weight:800;font-size:32px;margin:6px 0 24px;color:#e0562f;}
+  .cover-rule{width:140px;height:3px;background:var(--gold);margin:0 auto 26px;}
+  .cover-title{font-family:'Noto Serif',serif;font-weight:700;font-size:32px;color:var(--navy);line-height:1.35;max-width:600px;margin:0 auto;}
+  .cover-title.as{font-family:'Noto Sans Bengali',sans-serif;}
+  .cover-byline{margin-top:16px;font-family:'Inter',sans-serif;font-weight:700;font-size:16px;color:var(--ink-soft);}
+  .cover-byline.as{font-family:'Noto Sans Bengali',sans-serif;}
+  .cover-link-row{display:flex;justify-content:center;gap:12px;margin-top:22px;flex-wrap:wrap;}
+  .cover-link-btn{
+    display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:999px;
+    font-weight:700;font-size:13.5px;text-decoration:none;
+  }
+  .cover-link-btn.app{background:var(--navy);color:#fdf8ea;}
+  .cover-link-btn.site{background:transparent;color:var(--navy);border:1.5px solid var(--navy);}
+  .cover-meta{margin-top:28px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);}
+  .cover-bottom-band{
+    margin-top:auto;padding:20px 50px 30px;
+    display:flex;align-items:center;justify-content:center;gap:12px;
+  }
+  .cover-bottom-band .mini-badge{
+    width:36px;height:36px;border-radius:50%;background:#fff;border:1.5px solid var(--rule);
+    display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto;
+  }
+  .cover-bottom-band .mini-badge img{width:100%;height:100%;object-fit:contain;}
+  .cover-bottom-band .mini-badge span{font-family:'Noto Serif',serif;font-weight:700;font-style:italic;color:var(--navy);}
+  .cover-bottom-text{font-family:'Inter',sans-serif;font-weight:700;font-size:13.5px;color:var(--navy);}
+  .cover-bottom-text a{color:var(--navy);}
+
+  /* ---------- Mode tabs + PDF->JSON extract panel ---------- */
+  .mode-tabs{display:flex;gap:8px;margin-bottom:22px;}
+  .mode-tab{
+    flex:1;padding:10px 8px;text-align:center;border-radius:8px;border:1px solid var(--navy-3);
+    background:var(--navy-2);color:#c3c9d9;cursor:pointer;font-size:12.5px;font-weight:700;transition:.15s;
+  }
+  .mode-tab.active{background:var(--gold);border-color:var(--gold);color:var(--navy);}
+
+  .extract-drop{
+    border:1.5px dashed var(--navy-3);border-radius:10px;padding:26px 16px;text-align:center;cursor:pointer;
+    transition:.15s;
+  }
+  .extract-drop:hover{border-color:var(--gold);}
+  .extract-drop .big{font-size:26px;margin-bottom:6px;}
+  .extract-drop .txt{font-size:12.5px;color:#c3c9d9;}
+  .extract-status{font-size:12px;color:var(--gold-soft);margin-top:12px;line-height:1.6;display:none;}
+  .extract-progress{width:100%;height:6px;background:var(--navy-2);border-radius:4px;overflow:hidden;margin-top:8px;display:none;}
+  .extract-progress-bar{height:100%;width:0%;background:var(--gold);transition:width .2s;}
+
+  .extract-main{width:100%;max-width:820px;}
+  .extract-card{background:var(--paper);border-radius:12px;padding:22px 26px;box-shadow:0 10px 32px rgba(16,29,51,.14);margin-bottom:20px;}
+  .extract-card h3{margin:0 0 12px;font-family:'Noto Serif',serif;font-size:16px;color:var(--navy);}
+  .extract-textarea{
+    width:100%;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.55;
+    background:#faf7ee;border:1px solid var(--rule);border-radius:8px;padding:12px;resize:vertical;color:var(--ink);
+  }
+  .extract-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
+  .extract-btn{
+    padding:10px 16px;border-radius:8px;border:1px solid var(--navy-3);background:var(--navy);color:#eef0f5;
+    font-weight:700;font-size:13px;cursor:pointer;transition:.15s;
+  }
+  .extract-btn.primary{background:linear-gradient(180deg,var(--gold-soft),var(--gold));color:var(--navy);border:none;}
+  .extract-btn:disabled{opacity:.5;cursor:not-allowed;}
+
+  .q-list{position:relative;z-index:1;}
+
+  .watermark{
+    position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0;
+  }
+  .watermark span{
+    position:absolute;left:0;right:0;text-align:center;
+    font-family:'Inter',sans-serif;font-weight:800;font-size:46px;color:var(--navy);
+    transform:rotate(-30deg);white-space:nowrap;display:block;
+  }
+  .q-block{margin-bottom:28px;page-break-inside:avoid;}
+  .q-top{display:flex;gap:14px;}
+  .q-num{
+    flex:0 0 34px;height:34px;border-radius:50%;border:1.5px solid var(--navy);
+    display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;
+    font-weight:600;font-size:15px;color:var(--navy);
+  }
+  .q-body{flex:1;}
+  .q-text{font-size:17.5px;font-weight:600;color:var(--ink);line-height:1.55;margin-bottom:12px;}
+  .q-text.as{font-family:'Noto Sans Bengali',sans-serif;font-weight:500;}
+  .q-img{max-width:260px;height:170px;object-fit:contain;display:block;margin:6px 0 14px;border:1px solid var(--rule);border-radius:4px;background:#fff;}
+  .q-options{list-style:none;margin:0 0 4px;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;}
+  .q-opt{display:flex;gap:9px;font-size:15.5px;color:var(--ink);align-items:flex-start;}
+  .q-opt.as{font-family:'Noto Sans Bengali',sans-serif;}
+  .q-opt .opt-tag{
+    flex:0 0 auto;font-family:'JetBrains Mono',monospace;font-weight:600;font-size:13px;
+    width:23px;height:23px;border-radius:5px;border:1px solid var(--rule);
+    display:flex;align-items:center;justify-content:center;color:var(--ink-soft);
+  }
+  .q-opt.correct .opt-tag{background:var(--ok);border-color:var(--ok);color:#fff;}
+  .q-opt.correct span.opt-txt{color:var(--ok);font-weight:600;}
+  .q-hint{
+    margin-top:12px;font-size:15.5px;color:var(--ink);font-weight:600;background:#ecdca0;border-left:4px solid var(--gold);
+    padding:10px 13px;border-radius:0 6px 6px 0;line-height:1.5;
+  }
+  .q-hint.as{font-family:'Noto Sans Bengali',sans-serif;}
+  .rule-line{border:none;border-top:1px dashed var(--rule);margin:18px 0;}
+
+  @media (max-width:900px){
+    .app{flex-direction:column;}
+    .sidebar{width:100%;flex:none;position:relative;max-height:none;}
+    .doc-header,.doc-body,.doc-footer{padding-left:24px;padding-right:24px;}
+    .q-options{gap:8px 10px;}
+  }
+
+  @media print{
+    body{background:#fff;}
+    .sidebar, .empty-state, .no-print{display:none !important;}
+    .preview-wrap{padding:0;background:#fff;display:block;}
+    #printArea{max-width:none;}
+    .page{
+      box-shadow:none;border:none;margin:0;width:auto;
+      page-break-after:always;
+    }
+    .page:last-child{page-break-after:auto;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand"><span class="as">প্ৰশ্নপত্ৰ</span><span class="en">Paper Builder</span></div>
+    <div class="tagline">Paste your question JSON, style the paper, then preview or export it as a print‑ready PDF.</div>
+
+    <div class="mode-tabs">
+      <div class="mode-tab active" id="tabBuild" onclick="setMode('build')">📄 Build PDF</div>
+      <div class="mode-tab" id="tabExtract" onclick="setMode('extract')">🔎 PDF → JSON</div>
+    </div>
+
+    <div id="buildControls">
+      <div class="section">
+        <div class="section-label">Question data</div>
+        <label class="field-label">JSON array</label>
+        <textarea id="jsonInput" spellcheck="false"></textarea>
+        <button class="file-btn" type="button" onclick="document.getElementById('fileInput').click()">⇪ Upload a .json file instead</button>
+        <input id="fileInput" type="file" accept=".json,application/json">
+        <div class="err" id="errBox"></div>
+        <div class="ok-msg" id="okBox"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Branding</div>
+        <div class="field-gap">
+          <label class="field-label">Logo (used as the brand badge)</label>
+          <button class="file-btn" type="button" onclick="document.getElementById('logoInput').click()">🖼 Upload logo</button>
+          <input id="logoInput" type="file" accept="image/*" style="display:none">
+          <div id="logoPreviewRow" style="display:none;align-items:center;gap:10px;margin-top:8px;">
+            <img id="logoPreview" style="width:34px;height:34px;object-fit:contain;border-radius:50%;background:#fff;">
+            <button type="button" onclick="clearLogo()" style="background:none;border:none;color:#ff9b8f;font-size:11.5px;cursor:pointer;padding:0;">Remove logo</button>
+          </div>
+        </div>
+        <div class="field-gap">
+          <label class="field-label">Header line 1 (test / exam name)</label>
+          <input type="text" id="header1Input" placeholder="e.g. Assam History Mock Test 01">
+        </div>
+        <div class="field-gap">
+          <label class="field-label">Header line 2 (byline)</label>
+          <input type="text" id="header2Input" value="By - DEKA SIR CLASSES">
+        </div>
+        <div class="field-gap">
+          <label class="field-label">Website link — "Visit Our Site" button (optional)</label>
+          <input type="text" id="siteLinkInput" placeholder="e.g. dekasirclasses.in">
+        </div>
+        <div class="hint-note">Your logo and a clickable dekasirclasses.in link appear in the footer of every page.</div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Language</div>
+        <div class="toggle-row">
+          <div class="toggle-btn active" id="btnEn" onclick="setLang('en')">English<span class="sub">EN</span></div>
+          <div class="toggle-btn" id="btnAs" onclick="setLang('as')">অসমীয়া<span class="sub">AS</span></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Display options</div>
+        <div class="switch-row">
+          <span>Show hints as extra info</span>
+          <label class="switch"><input type="checkbox" id="hintsToggle"><span class="slider"></span></label>
+        </div>
+        <div class="switch-row">
+          <span>Highlight correct answer</span>
+          <label class="switch"><input type="checkbox" id="answerToggle" checked><span class="slider"></span></label>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Export</div>
+        <label class="field-label">PDF file name</label>
+        <input type="text" id="pdfNameInput" placeholder="e.g. assam-history-quiz" value="question-paper">
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-preview" onclick="doPreview()">👁 Preview</button>
+        <button class="btn btn-pdf" onclick="printToPdf()">🖨 Create Final PDF</button>
+        <div class="hint-note">Opens your browser's print dialog — choose <b>Save as PDF</b>. Lightweight, text-searchable, and matches the preview exactly.</div>
+      </div>
+    </div>
+
+    <div id="extractControls" style="display:none;">
+      <div class="section">
+        <div class="section-label">✍️ Type/paste questions (offline, no AI)</div>
+        <div class="hint-note">This works everywhere, including outside Claude.ai — no API call needed. Type each question in exactly this format, leaving a blank line between questions:</div>
+        <pre style="background:var(--navy-2);border:1px solid var(--navy-3);border-radius:8px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#dfe2ec;line-height:1.6;white-space:pre-wrap;margin:8px 0;">Q: What is 7×8?
+A) 48
+B) 56
+C) 64
+D) 72
+Answer: B
+Hint: Think 7×8 = 7×4×2</pre>
+        <textarea id="templateInput" style="width:100%;height:140px;font-family:'JetBrains Mono',monospace;font-size:12px;background:var(--navy-2);border:1px solid var(--navy-3);color:#f2f3f7;border-radius:8px;padding:10px 12px;resize:vertical;" placeholder="Q: ...&#10;A) ...&#10;B) ...&#10;C) ...&#10;D) ...&#10;Answer: B&#10;Hint: ..."></textarea>
+        <div class="extract-actions" style="margin-top:10px;">
+          <button class="extract-btn primary" style="flex:1;" onclick="parseTemplateToJson()">⚡ Parse to JSON</button>
+          <button class="extract-btn" style="flex:1;" onclick="addHintsWithAi()" id="addHintsBtn">✨ Add hints with AI</button>
+        </div>
+        <div class="hint-note" id="templateHintStatus">Assamese fields are left empty (no offline translator available) — fill them in afterward, or ask Claude in a chat to translate the generated JSON. "Add hints with AI" fills in any missing <code>Hint:</code> lines in place — only works inside Claude.ai.</div>
+      </div>
+
+      <div class="section">
+        <div class="err" style="display:block;background:rgba(255,155,143,.1);border:1px solid #ff9b8f;border-radius:8px;padding:10px 12px;line-height:1.55;">
+          ⚠ <b>Important:</b> the option below (uploading a PDF for AI conversion) calls Anthropic's API directly from the page, which only works while this file is open <b>inside a Claude.ai chat</b> (as a Canvas/Artifact). Once you download this HTML file and open it on its own, that call fails silently. Outside Claude.ai, use the offline template above instead, or upload your PDF directly to Claude in a chat.
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-label">📄 Upload source PDF (AI, needs Claude.ai)</div>
+        <div class="extract-drop" onclick="document.getElementById('pdfSourceInput').click()">
+          <div class="big">📤</div>
+          <div class="txt">Tap to upload a question-bank PDF<br>(text-based, not scanned images)</div>
+        </div>
+        <input id="pdfSourceInput" type="file" accept=".pdf,application/pdf" style="display:none">
+        <div class="extract-status" id="extractStatus"></div>
+        <div class="extract-progress" id="extractProgress"><div class="extract-progress-bar" id="extractProgressBar"></div></div>
+      </div>
+      <div class="section">
+        <div class="hint-note">This reads the PDF's text, strips out DEKA SIR CLASSES branding/headers/footers/page numbers, then asks Claude to restructure each real question into bilingual English/Assamese JSON — with options, the correct answer, and a short hint — matching the Builder's exact schema (including an empty "image" field). Works best on clean, text-based MCQ PDFs. Always double-check the output before use.</div>
+      </div>
+    </div>
+  </aside>
+
+
+  <main class="preview-wrap">
+    <div id="buildMain">
+      <div id="printArea"></div>
+      <div class="empty-state" id="emptyState">
+        <div class="as">সাজু নহ'ল</div>
+        <p>Paste or upload your question JSON on the left, then press <b>Preview</b> to see the formatted paper here.</p>
+      </div>
+    </div>
+
+    <div id="extractMain" class="extract-main" style="display:none;">
+      <div class="empty-state" id="extractEmptyState">
+        <div class="as">PDF → JSON</div>
+        <p>Type your questions in the offline template on the left (works everywhere, no AI needed), or upload a PDF for AI-assisted bilingual conversion (only works inside Claude.ai).</p>
+      </div>
+      <div id="extractResults" style="display:none;">
+        <div class="extract-card">
+          <h3>Extracted source text <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">(branding/header/footer already stripped — edit freely before converting)</span></h3>
+          <textarea class="extract-textarea" id="extractedTextBox" rows="10"></textarea>
+          <div class="extract-actions">
+            <button class="extract-btn primary" id="convertBtn" onclick="convertEditedText()">⚡ Arrange &amp; Convert to JSON with AI</button>
+          </div>
+          <div class="hint-note">This rewrites the text above into clean Q:/A)/B)/C)/D)/Answer:/Hint: blocks — only real questions, everything else (branding, page numbers, counts) discarded — then converts that to JSON locally. Assamese fields come out empty; fill them in afterward or ask Claude in a chat to translate.</div>
+        </div>
+        <div class="extract-card">
+          <h3>Generated JSON</h3>
+          <textarea class="extract-textarea" id="extractedJsonBox" rows="14"></textarea>
+          <div class="extract-actions">
+            <button class="extract-btn primary" onclick="sendExtractedToBuilder()">➜ Send to Builder</button>
+            <button class="extract-btn" onclick="copyExtractedJson()">⧉ Copy JSON</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<script>
+const SAMPLE = [{"question_en":"What is 7×8?","question_as":"৭×৮ কিমান?","options_en":["48","56","64","72"],"options_as":["৪৮","৫৬","৬৪","৭২"],"correctAnswer":1,"image":"https://example.com/diagram.png","hint_en":"Think 7×8 = 7×4×2","hint_as":"চিন্তা কৰক ৭×৮ = ৭×৪×২"}];
+document.getElementById('jsonInput').value = JSON.stringify(SAMPLE, null, 2);
+
+let state = { lang:'en', showHints:false, showAnswer:true, data:null, logo:null };
+
+document.getElementById('logoInput').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    state.logo = ev.target.result;
+    document.getElementById('logoPreview').src = state.logo;
+    document.getElementById('logoPreviewRow').style.display = 'flex';
+    if(state.data) render();
+  };
+  reader.readAsDataURL(f);
+});
+function clearLogo(){
+  state.logo = null;
+  document.getElementById('logoInput').value = '';
+  document.getElementById('logoPreviewRow').style.display = 'none';
+  if(state.data) render();
+}
+
+const asDigits = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
+function toAsNum(n){ return String(n).split('').map(d=>asDigits[+d]||d).join(''); }
+function optionTag(i, lang){ return lang==='as' ? ['ক','খ','গ','ঘ','ঙ','চ'][i] : String.fromCharCode(65+i); }
+
+function setLang(l){
+  state.lang = l;
+  document.getElementById('btnEn').classList.toggle('active', l==='en');
+  document.getElementById('btnAs').classList.toggle('active', l==='as');
+  if(state.data) render();
+}
+
+document.getElementById('hintsToggle').addEventListener('change', e=>{ state.showHints = e.target.checked; if(state.data) render(); });
+document.getElementById('answerToggle').addEventListener('change', e=>{ state.showAnswer = e.target.checked; if(state.data) render(); });
+['header1Input','header2Input','siteLinkInput'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', ()=>{ if(state.data) render(); });
+});
+
+function setMode(mode){
+  const isBuild = mode === 'build';
+  document.getElementById('tabBuild').classList.toggle('active', isBuild);
+  document.getElementById('tabExtract').classList.toggle('active', !isBuild);
+  document.getElementById('buildControls').style.display = isBuild ? '' : 'none';
+  document.getElementById('extractControls').style.display = isBuild ? 'none' : '';
+  document.getElementById('buildMain').style.display = isBuild ? '' : 'none';
+  document.getElementById('extractMain').style.display = isBuild ? 'none' : '';
+}
+
+// ---- Offline "type it yourself" template parser (no AI, works anywhere) ----
+// Expected format per question, separated by a blank line:
+//   Q: question text
+//   A) option
+//   B) option
+//   C) option
+//   D) option
+//   Answer: B
+//   Hint: optional hint text
+function parseTemplateText(text){
+  const blocks = text.split(/\r?\n\s*\r?\n/).map(b => b.trim()).filter(Boolean);
+  const questions = [];
+
+  blocks.forEach(block=>{
+    const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const q = { question_en:'', question_as:'', options_en:[], options_as:[], correctAnswer:0, image:'', hint_en:'', hint_as:'' };
+    let sawQuestionMarker = false;
+
+    lines.forEach(line=>{
+      let m;
+      if((m = line.match(/^Q[:.\)]\s*(.+)$/i))){
+        q.question_en = m[1].trim();
+        sawQuestionMarker = true;
+      }else if((m = line.match(/^([A-D])[:.\)]\s*(.+)$/i))){
+        const idx = m[1].toUpperCase().charCodeAt(0) - 65;
+        q.options_en[idx] = m[2].trim();
+      }else if((m = line.match(/^Answer[:.\)]\s*([A-D])/i))){
+        q.correctAnswer = m[1].toUpperCase().charCodeAt(0) - 65;
+      }else if((m = line.match(/^Hint[:.\)]\s*(.+)$/i))){
+        q.hint_en = m[1].trim();
+      }else if(!sawQuestionMarker){
+        // No "Q:" marker seen yet on this block — treat the first bare line(s) as the question
+        q.question_en = (q.question_en ? q.question_en + ' ' : '') + line;
+      }
+    });
+
+    q.options_en = [0,1,2,3].map(i => q.options_en[i] || '');
+    q.options_as = ['', '', '', ''];
+
+    if(q.question_en.trim() && q.options_en.filter(Boolean).length >= 2){
+      questions.push(q);
+    }
+  });
+
+  return questions;
+}
+
+function parseTemplateToJson(){
+  const text = document.getElementById('templateInput').value;
+  if(!text || !text.trim()){
+    alert('Type or paste your questions first, using the format shown above.');
+    return;
+  }
+  const questions = parseTemplateText(text);
+  if(questions.length === 0){
+    alert('No questions could be parsed. Double-check each question follows the exact format shown above (Q:, A)/B)/C)/D), Answer:, blank line between questions).');
+    return;
+  }
+  document.getElementById('extractEmptyState').style.display = 'none';
+  document.getElementById('extractResults').style.display = 'block';
+  document.getElementById('extractedTextBox').value = text;
+  document.getElementById('extractedJsonBox').value = JSON.stringify(questions, null, 2);
+  setExtractStatus(`✓ Parsed ${questions.length} question${questions.length>1?'s':''} locally — no AI needed. Review the JSON below, fill in Assamese fields if you want them, then send it to the Builder.`, false);
+}
+
+// Fills in any missing "Hint:" lines directly inside the template textarea,
+// keeping the exact Q:/A)/B)/C)/D)/Answer:/Hint: format. AI-only feature —
+// only works while running inside a Claude.ai chat.
+async function addHintsWithAi(){
+  const statusEl = document.getElementById('templateHintStatus');
+  const text = document.getElementById('templateInput').value;
+  if(!text || !text.trim()){
+    alert('Type or paste your questions first, using the format shown above.');
+    return;
+  }
+  const btn = document.getElementById('addHintsBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Adding hints…';
+
+  const systemPrompt = `You are given text in this exact plain-text quiz format, one question per block separated by a blank line:
+Q: question
+A) option
+B) option
+C) option
+D) option
+Answer: <letter>
+Hint: optional hint
+
+Task: return the SAME text, block for block, completely unchanged, EXCEPT that every block missing a "Hint:" line gets one added as the last line — one short sentence that nudges toward the answer without stating it outright (e.g. "Think 7×8 = 7×4×2"). If a block already has a Hint: line, leave it exactly as-is. Do not change question text, options, or answers. Do not add commentary, markdown fences, or anything outside the quiz blocks themselves. Output ONLY the resulting plain text.`;
+
+  try{
+    const chunks = chunkExtractedText(text, 1800);
+    let rebuilt = [];
+    for(let i=0; i<chunks.length; i++){
+      btn.textContent = `⏳ Chunk ${i+1} / ${chunks.length}…`;
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: chunks[i] }]
+        })
+      });
+      if(!response.ok) throw new Error('API request failed (' + response.status + ')');
+      const data = await response.json();
+      const out = (data.content || []).map(b => b.type === 'text' ? b.text : '').join('\n').trim();
+      rebuilt.push(out);
+    }
+    document.getElementById('templateInput').value = rebuilt.join('\n\n');
+    statusEl.textContent = '✓ Hints added where missing. Review them, then press "Parse to JSON."';
+  }catch(err){
+    console.error(err);
+    statusEl.textContent = `⚠ Couldn't reach Claude — actual error: "${err.message}". This feature needs this file open inside a Claude.ai chat. Outside Claude.ai, type hints manually or ask Claude in a chat to add them for you.`;
+  }finally{
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+document.getElementById('fileInput').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => { document.getElementById('jsonInput').value = ev.target.result; doPreview(); };
+  reader.readAsText(f);
+});
+
+function showError(msg){
+  const eb = document.getElementById('errBox'); eb.textContent = msg; eb.style.display='block';
+  document.getElementById('okBox').style.display='none';
+}
+function showOk(msg){
+  const ob = document.getElementById('okBox'); ob.textContent = msg; ob.style.display='block';
+  document.getElementById('errBox').style.display='none';
+}
+
+function doPreview(){
+  const raw = document.getElementById('jsonInput').value;
+  let parsed;
+  try{ parsed = JSON.parse(raw); }
+  catch(e){ showError('⚠ Invalid JSON: ' + e.message); return; }
+  if(!Array.isArray(parsed) || parsed.length===0){ showError('⚠ JSON must be a non-empty array of question objects.'); return; }
+  state.data = parsed;
+  showOk('✓ Loaded ' + parsed.length + ' question' + (parsed.length>1?'s':'') + '.');
+  render();
+}
+
+function esc(s){
+  if(s===undefined||s===null) return '';
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// PDF viewers (e.g. WhatsApp's) resolve scheme-less hrefs against the
+// document's own content:// URI and fail — always force a real https:// link.
+function normalizeUrl(url){
+  const trimmed = (url || '').trim();
+  if(!trimmed) return '';
+  if(/^https?:\/\//i.test(trimmed)) return trimmed;
+  return 'https://' + trimmed.replace(/^\/+/, '');
+}
+
+function brandBadgeHtml(){
+  if(state.logo) return `<img src="${state.logo}" alt="logo">`;
+  return `<span class="fallback-d">D</span>`;
+}
+
+function buildCoverPageHtml(lang, header1, header2, siteLink, totalQuestions){
+  const titleClass = lang==='as' ? ' as' : '';
+  let linksHtml = '';
+  if(siteLink){
+    linksHtml = `<div class="cover-link-row"><a class="cover-link-btn site" href="${esc(normalizeUrl(siteLink))}" target="_blank" rel="noopener">🌐 Visit Our Site</a></div>`;
+  }
+  return `<div class="page cover-page">
+    <div class="cover-badge-wrap">
+      <div class="cover-badge">${brandBadgeHtml()}</div>
+    </div>
+    <div class="cover-body">
+      <div class="cover-estd">ESTD. 2021</div>
+      <div class="cover-brand">DEKA SIR CLASSES</div>
+      <div class="cover-rule"></div>
+      <div class="cover-title${titleClass}">${header1 ? esc(header1) : (lang==='as' ? 'প্ৰশ্নপত্ৰ' : 'Question Paper')}</div>
+      <div class="cover-byline${titleClass}">${esc(header2)}</div>
+      ${linksHtml}
+      <div class="cover-meta">${totalQuestions} Question${totalQuestions>1?'s':''}</div>
+    </div>
+    <div class="cover-bottom-band">
+      <div class="mini-badge">${state.logo ? `<img src="${state.logo}" alt="logo">` : '<span>D</span>'}</div>
+      <div class="cover-bottom-text">DEKA SIR CLASSES · <a href="https://dekasirclasses.in" target="_blank" rel="noopener">dekasirclasses.in</a></div>
+    </div>
+  </div>`;
+}
+
+function buildQBlockHtml(q, globalIdx, lang, asClass){
+  const qText = lang==='as' ? (q.question_as || q.question_en || '') : (q.question_en || q.question_as || '');
+  const opts = lang==='as' ? (q.options_as || q.options_en || []) : (q.options_en || q.options_as || []);
+  const hint = lang==='as' ? (q.hint_as || q.hint_en) : (q.hint_en || q.hint_as);
+  const numLabel = lang==='as' ? toAsNum(globalIdx+1) : (globalIdx+1);
+
+  let html = `<div class="q-block">
+    <div class="q-top">
+      <div class="q-num">${numLabel}</div>
+      <div class="q-body">
+        <div class="q-text${asClass}">${esc(qText)}</div>`;
+  if(q.image){
+    html += `<img class="q-img" src="${esc(q.image)}" onerror="this.style.display='none'" alt="question image">`;
+  }
+  html += `<ul class="q-options">`;
+  opts.forEach((opt, oi)=>{
+    const isCorrect = state.showAnswer && q.correctAnswer===oi;
+    html += `<li class="q-opt${asClass}${isCorrect?' correct':''}">
+                <span class="opt-tag">${optionTag(oi, lang)}</span>
+                <span class="opt-txt">${esc(opt)}</span>
+              </li>`;
+  });
+  html += `</ul>`;
+  if(state.showHints && hint){
+    html += `<div class="q-hint${asClass}">${esc(hint)}</div>`;
+  }
+  html += `</div></div></div>`;
+  return html;
+}
+
+function render(){
+  const data = state.data;
+  const lang = state.lang;
+  const header1 = document.getElementById('header1Input').value.trim();
+  const header2 = document.getElementById('header2Input').value.trim() || 'By - DEKA SIR CLASSES';
+  const siteLink = document.getElementById('siteLinkInput').value.trim();
+  const asClass = lang==='as' ? ' as' : '';
+  const linkHref = siteLink ? normalizeUrl(siteLink) : 'https://dekasirclasses.in';
+
+  document.getElementById('emptyState').style.display = 'none';
+
+  let html = buildCoverPageHtml(lang, header1, header2, siteLink, data.length);
+
+  html += `<div class="page content-page">`;
+  html += `<div class="doc-body">`;
+  html += `<div class="watermark" id="watermarkTile"></div>`;
+  html += `<div class="q-list">`;
+  data.forEach((q, i)=>{
+    html += buildQBlockHtml(q, i, lang, asClass);
+    if(i < data.length-1) html += `<hr class="rule-line">`;
+  });
+  html += `</div>`; // .q-list
+  html += `</div>`; // .doc-body
+  html += `<div class="content-footer">
+              <div class="mini-badge">${state.logo ? `<img src="${state.logo}" alt="logo">` : '<span>D</span>'}</div>
+              <a href="${esc(linkHref)}" target="_blank" rel="noopener">${esc(linkHref.replace(/^https?:\/\//,''))}</a>
+            </div>`;
+  html += `</div>`; // .page
+
+  document.getElementById('printArea').innerHTML = html;
+
+  // Tile the watermark roughly once per printed page down the whole
+  // continuous question flow (cover page intentionally has none).
+  const contentPage = document.querySelector('.content-page');
+  const wmContainer = document.getElementById('watermarkTile');
+  const totalHeight = contentPage.offsetHeight;
+  const tileEvery = 1050;
+  let wmHtml = '';
+  for(let y = 480; y < totalHeight; y += tileEvery){
+    wmHtml += `<span style="top:${y}px;opacity:.07;">DEKA SIR CLASSES</span>`;
+  }
+  wmContainer.innerHTML = wmHtml;
+}
+
+const ORIGINAL_TITLE = document.title;
+function printToPdf(){
+  if(!state.data){ doPreview(); }
+  if(!state.data){ return; }
+  const rawName = (document.getElementById('pdfNameInput').value || 'question-paper').trim();
+  const safeName = rawName.replace(/[\\/:*?"<>|]+/g, '-') || 'question-paper';
+  document.title = safeName;
+  const restore = ()=>{ document.title = ORIGINAL_TITLE; window.removeEventListener('afterprint', restore); };
+  window.addEventListener('afterprint', restore);
+  setTimeout(()=>{ window.print(); }, 60);
+}
+
+/* ============================================================
+   PDF → JSON extraction (Extract mode)
+   Reads text out of an uploaded PDF, then asks Claude to turn
+   it into the bilingual JSON schema the Builder expects.
+   ============================================================ */
+if(window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+function setExtractStatus(msg, showBar, pct){
+  const box = document.getElementById('extractStatus');
+  box.textContent = msg;
+  box.style.display = msg ? 'block' : 'none';
+  const bar = document.getElementById('extractProgress');
+  bar.style.display = showBar ? 'block' : 'none';
+  if(showBar) document.getElementById('extractProgressBar').style.width = (pct||0) + '%';
+}
+
+async function extractPdfText(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let fullText = '';
+  const maxPages = Math.min(pdf.numPages, 400); // safety cap for extremely large files only
+  for(let p = 1; p <= maxPages; p++){
+    setExtractStatus(`Reading page ${p} of ${maxPages}…`, true, Math.round((p/maxPages)*30));
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(it => it.str).join(' ');
+    fullText += `\n\n--- Page ${p} ---\n\n` + pageText;
+  }
+  if(pdf.numPages > maxPages){
+    fullText += `\n\n[NOTE: This PDF has ${pdf.numPages} pages — only the first ${maxPages} were read.]`;
+  }
+  return fullText.trim();
+}
+
+// Strips our own branding/header/footer/page-number boilerplate (and the
+// internal "--- Page N ---" markers used only for chunking) so the person
+// only sees and edits the actual question content.
+function stripBoilerplate(text){
+  const noisePatterns = [
+    /---\s*Page\s*\d+\s*---/gi,
+    /DEKA\s+SIR\s+CLASSES/gi,
+    /ESTD\.?\s*2021/gi,
+    /dekasirclasses\.in/gi,
+    /By\s*-\s*DEKA\s+SIR\s+CLASSES/gi,
+    /Get\s+Our\s+App/gi,
+    /Visit\s+Our\s+Site/gi,
+    /\bDSC\b/g,
+    /Page\s*\d+\s*\/\s*\d+/gi,
+    /\d+\s+Questions?\s*·?\s*\d+\s+Pages?/gi,
+  ];
+  let cleaned = text;
+  noisePatterns.forEach(p => { cleaned = cleaned.replace(p, ' '); });
+  return cleaned.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function chunkExtractedText(text, chunkSize){
+  // Works whether or not page markers survived (the visible/editable text
+  // has them stripped, so fall back to paragraph-based greedy packing).
+  const hasMarkers = /---\s*Page\s*\d+\s*---/i.test(text);
+  const parts = hasMarkers
+    ? text.split(/(?=--- Page \d+ ---)/g).filter(Boolean)
+    : text.split(/\n{2,}/).map(p => p + '\n\n').filter(p => p.trim());
+  const chunks = [];
+  let current = '';
+  parts.forEach(part=>{
+    if(current.length + part.length > chunkSize && current.length > 0){
+      chunks.push(current);
+      current = '';
+    }
+    current += part;
+  });
+  if(current.trim()) chunks.push(current);
+  return chunks.length ? chunks : [text];
+}
+
+async function reformatChunkToTemplate(chunkText){
+  const systemPrompt = `You are given raw, messy text extracted from a question-bank PDF (it may contain page headers, footers, branding, website links, page numbers, question/page counts, and other junk mixed in with the actual quiz questions).
+
+Task: pull out ONLY the real multiple-choice questions and re-arrange each one into exactly this plain-text block format, separated by a blank line between questions:
+
+Q: question text
+A) option
+B) option
+C) option
+D) option
+Answer: <letter>
+Hint: one short line that nudges toward the answer without stating it outright
+
+Rules:
+- Output ONLY the quiz blocks in that format — nothing else. No markdown fences, no headings, no commentary, no page numbers, no branding, no counts.
+- Completely discard anything that is not an actual question: headers, footers, watermarks, page numbers, brand names, website URLs, "ESTD." lines, app-download prompts, question/page counts, cover titles/bylines.
+- If the correct answer is explicitly marked or obvious from the source (e.g. bolded, starred, or stated), use it for "Answer:". If genuinely not determinable, make your best judgment from context — never leave it blank.
+- Always include a Hint line — use the source's existing explanation if there is one (trimmed to one line), otherwise write a short original one-liner.
+- If a fragment doesn't contain a complete question with at least 2 options, skip it — do not guess or fabricate questions.
+- If this chunk of text contains no complete questions at all, output nothing.`;
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages: [
+        { role: "user", content: `Raw extracted PDF text:\n\n${chunkText}\n\nReturn the arranged quiz blocks now.` }
+      ]
+    })
+  });
+
+  if(!response.ok){
+    throw new Error('API request failed (' + response.status + ')');
+  }
+  const data = await response.json();
+  const text = (data.content || [])
+    .map(block => block.type === 'text' ? block.text : '')
+    .join('\n')
+    .trim();
+  return text.replace(/^```\w*\s*/,'').replace(/```\s*$/,'').trim();
+}
+
+document.getElementById('pdfSourceInput').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  document.getElementById('extractEmptyState').style.display = 'none';
+  document.getElementById('extractResults').style.display = 'none';
+  document.getElementById('extractedJsonBox').value = '';
+
+  try{
+    setExtractStatus('Opening PDF…', true, 5);
+    const rawText = await extractPdfText(file);
+    const cleanedText = stripBoilerplate(rawText);
+    if(!cleanedText || cleanedText.length < 20){
+      setExtractStatus('⚠ Could not find readable question text in this PDF. It may be scanned images rather than text — try a text-based PDF.', false);
+      return;
+    }
+    document.getElementById('extractedTextBox').value = cleanedText.slice(0, 300000);
+    document.getElementById('extractResults').style.display = 'block';
+    setExtractStatus('✓ Raw text extracted. Press "Convert to JSON with AI" to arrange it into clean question blocks and generate the JSON.', false);
+  }catch(err){
+    console.error(err);
+    setExtractStatus('⚠ Something went wrong reading this PDF: ' + err.message, false);
+  }
+});
+
+async function convertEditedText(){
+  const text = document.getElementById('extractedTextBox').value.trim();
+  if(!text){
+    setExtractStatus('⚠ There\'s no text to convert — upload a PDF first.', false);
+    return;
+  }
+  const btn = document.getElementById('convertBtn');
+  btn.disabled = true;
+
+  const chunks = chunkExtractedText(text, 1800);
+  let arrangedBlocks = [];
+  let chunkErrors = 0;
+  let lastErrorMsg = '';
+  for(let i=0; i<chunks.length; i++){
+    setExtractStatus(`Arranging with Claude — chunk ${i+1} of ${chunks.length}…`, true, Math.round(((i+1)/chunks.length)*90));
+    try{
+      const arranged = await reformatChunkToTemplate(chunks[i]);
+      if(arranged) arrangedBlocks.push(arranged);
+    }catch(err){
+      chunkErrors++;
+      lastErrorMsg = err.message || String(err);
+      console.warn('Chunk failed:', err);
+    }
+  }
+
+  if(arrangedBlocks.length === 0 && chunkErrors === chunks.length && chunks.length > 0){
+    setExtractStatus(`⚠ Every request to Claude failed — actual error: "${lastErrorMsg}". This is the API call being blocked because this file is running outside Claude.ai, not a bug in your text. Upload your PDF directly in a Claude.ai chat instead and Claude will convert it there.`, false);
+    btn.disabled = false;
+    return;
+  }
+  if(arrangedBlocks.length === 0){
+    setExtractStatus('⚠ No questions could be extracted. Try editing the text above to make each question and its options clearer.', false);
+    btn.disabled = false;
+    return;
+  }
+
+  // Replace the raw/messy text with the clean, arranged Q:/A)/Answer:/Hint: blocks…
+  const arrangedText = arrangedBlocks.join('\n\n');
+  document.getElementById('extractedTextBox').value = arrangedText;
+
+  // …then parse it locally into JSON (same deterministic parser as the offline template).
+  const questions = parseTemplateText(arrangedText);
+  document.getElementById('extractedJsonBox').value = JSON.stringify(questions, null, 2);
+
+  setExtractStatus(`✓ Arranged and extracted ${questions.length} question${questions.length>1?'s':''} — only questions, options, answers, and hints, everything else discarded. Review below, then send it to the Builder.`, false);
+  btn.disabled = false;
+}
+
+function sendExtractedToBuilder(){
+  const jsonText = document.getElementById('extractedJsonBox').value;
+  try{
+    JSON.parse(jsonText);
+  }catch(e){
+    alert('The JSON has an error, please fix it first: ' + e.message);
+    return;
+  }
+  document.getElementById('jsonInput').value = jsonText;
+  setMode('build');
+  doPreview();
+}
+
+function copyExtractedJson(){
+  const box = document.getElementById('extractedJsonBox');
+  box.select();
+  navigator.clipboard.writeText(box.value).catch(()=>{ document.execCommand('copy'); });
+}
+</script>
+</body>
+</html>
