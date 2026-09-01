@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Deka Sir Classes — Firebase Migration Tool</title>
+<style>
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.5;
+    }
+    h1 { font-size: 20px; color: #fbbf24; }
+    p.sub { color: #94a3b8; font-size: 14px; margin-top: -8px; }
+    .card {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 16px;
+        margin: 16px 0;
+    }
+    label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 4px; margin-top: 12px; }
+    input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-size: 15px;
+    }
+    button {
+        width: 100%;
+        padding: 14px;
+        border-radius: 10px;
+        border: none;
+        font-weight: 700;
+        font-size: 15px;
+        margin-top: 16px;
+        cursor: pointer;
+    }
+    #runBtn { background: linear-gradient(135deg,#f59e0b,#ef4444); color: #fff; }
+    #runBtn:disabled { opacity: 0.5; }
+    #log {
+        background: #000;
+        border-radius: 10px;
+        padding: 14px;
+        font-family: 'SF Mono', Consolas, monospace;
+        font-size: 12.5px;
+        white-space: pre-wrap;
+        max-height: 50vh;
+        overflow-y: auto;
+        margin-top: 16px;
+        display: none;
+    }
+    .line-ok { color: #4ade80; }
+    .line-err { color: #f87171; }
+    .line-info { color: #93c5fd; }
+    .warn-box {
+        background: #422006;
+        border: 1px solid #92400e;
+        color: #fcd34d;
+        border-radius: 10px;
+        padding: 12px;
+        font-size: 13px;
+    }
+</style>
+</head>
+<body>
+
+<h1>🔥 Deka Sir Classes — Firebase Migration Tool</h1>
+<p class="sub">One-time use. Pulls everything from Google Sheets and writes it into Firestore via plain REST requests. Read-only on the Sheets side.</p>
+
+<div class="warn-box">
+    ℹ️ Safe to re-run if it stops partway — every document uses a fixed ID matching your Sheets data, so re-running just overwrites the same records with the same data. Nothing gets duplicated.
+</div>
+
+<div class="card">
+    <label>Admin Email (same as your Apps Script admin login)</label>
+    <input type="text" id="adminEmail" autocomplete="off" />
+    <label>Admin Password</label>
+    <input type="password" id="adminPassword" autocomplete="off" />
+    <label>Firebase Admin Email (the one you added in Firebase Auth → Users)</label>
+    <input type="text" id="fbEmail" autocomplete="off" />
+    <label>Firebase Admin Password</label>
+    <input type="password" id="fbPassword" autocomplete="off" />
+    <button id="testBtn" onclick="testConnection()" style="background:#334155;color:#e2e8f0;">🔧 Test Connection First (recommended)</button>
+    <button id="runBtn" onclick="runMigration()">Start Migration</button>
+    <button onclick="resetMigrationProgress()" style="background:transparent;color:#94a3b8;font-size:12px;font-weight:400;padding:8px;margin-top:8px;">Reset saved progress (only if you need a genuinely clean re-run)</button>
+</div>
+
+<div id="log"></div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyDVKEABR6sNudb8VxreOuxxPB4AIbNvZAw",
+        authDomain: "deka-sir-classes-b5e95.firebaseapp.com",
+        projectId: "deka-sir-classes-b5e95",
+        storageBucket: "deka-sir-classes-b5e95.firebasestorage.app",
+        messagingSenderId: "1059056888962",
+        appId: "1:1059056888962:web:c1f6bbc88ed4824d8d589b"
+    };
+    const fbApp = initializeApp(firebaseConfig);
+    const auth = getAuth(fbApp);
+
+    const API_URL = "https://script.google.com/macros/s/AKfycbyKP6wngFhZdXkxrGD1uz0wVs9B0ugXKjezwFuIicoF5-Fz0_DvHxpeVhVkPu9K9iHz/exec";
+    const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/default/documents`;
+
+    const logEl = document.getElementById('log');
+    function log(msg, cls) {
+        logEl.style.display = 'block';
+        const line = document.createElement('div');
+        if (cls) line.className = cls;
+        line.textContent = msg;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function withTimeout(promise, ms, label) {
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms / 1000}s on: ${label}`)), ms))
+        ]);
+    }
+
+    // ----------------------------------------------------------------
+    // Resume support — after waiting through one long run, redoing every
+    // already-successful write from scratch on the next attempt wastes
+    // real time (and quota) for no reason. Every confirmed-successful
+    // path gets remembered in localStorage, so re-running — even after
+    // closing and reopening this page — picks up where it left off
+    // instead of starting over. Only genuinely un-written or previously
+    // failed documents get attempted again.
+    // ----------------------------------------------------------------
+    const DONE_KEY = 'migrationDonePaths';
+    const doneSet = new Set(JSON.parse(localStorage.getItem(DONE_KEY) || '[]'));
+    let sinceLastSave = 0;
+    function markDone(path) {
+        doneSet.add(path);
+        sinceLastSave++;
+        if (sinceLastSave >= 20) { saveDone(); sinceLastSave = 0; }
+    }
+    function saveDone() {
+        try { localStorage.setItem(DONE_KEY, JSON.stringify(Array.from(doneSet))); } catch (_) { /* storage full — safe to ignore, worst case a few re-writes happen */ }
+    }
+    window.resetMigrationProgress = function () {
+        localStorage.removeItem(DONE_KEY);
+        doneSet.clear();
+        log('Progress reset — next run will start completely fresh.', 'line-info');
+    };
+
+    // ----------------------------------------------------------------
+    // Plain REST writes — NOT the SDK's writeBatch()/commit(). That
+    // batch mechanism proved inconsistent in testing (would work for
+    // dozens of writes, then randomly hang on one), while this same
+    // plain-fetch REST approach was 100% reliable every single time it
+    // was tried. Trading batch atomicity for reliability is the right
+    // call for a one-time migration — a document that fails just gets
+    // retried individually, not silently stuck forever.
+    // ----------------------------------------------------------------
+
+    function toFirestoreValue(v) {
+        if (v === null || v === undefined) return { nullValue: null };
+        if (typeof v === 'boolean') return { booleanValue: v };
+        if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+        if (typeof v === 'string') return { stringValue: v };
+        if (Array.isArray(v)) return { arrayValue: { values: v.map(toFirestoreValue) } };
+        if (typeof v === 'object') return { mapValue: { fields: toFirestoreFields(v) } };
+        return { stringValue: String(v) };
+    }
+    function toFirestoreFields(obj) {
+        const fields = {};
+        Object.keys(obj).forEach(k => { fields[k] = toFirestoreValue(obj[k]); });
+        return fields;
+    }
+
+    async function restSet(path, data, getToken) {
+        const idToken = await getToken();
+        const res = await fetch(`${FIRESTORE_BASE}/${path}`, {
+            method: 'PATCH',
+            headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: toFirestoreFields(data) })
+        });
+        if (!res.ok) {
+            const errText = await res.text();
+            const err = new Error(`REST write failed (${res.status}) at ${path}: ${errText.slice(0, 200)}`);
+            err.status = res.status;
+            throw err;
+        }
+    }
+
+    // Writes a list of items one at a time (not concurrent) with a real
+    // pause after each — a BRAND NEW Firestore project starts with a low
+    // default write-rate ceiling that Google raises automatically as
+    // sustained real usage is observed, well below what even a modest
+    // concurrency of 3 needs. Up to 2 retries with longer backoff each
+    // time specifically for quota errors (429 / RESOURCE_EXHAUSTED),
+    // since retrying instantly into the same still-full quota window
+    // accomplishes nothing. Logs progress periodically, not on every
+    // single write, so the log stays readable across thousands of
+    // questions.
+    async function writeAllRest(items, pathFn, dataFn, getToken, label, concurrency = 2) {
+        let completed = 0;
+        let failed = 0;
+        const queue = items.slice();
+
+        async function writeOne(item) {
+            const path = pathFn(item);
+            if (doneSet.has(path)) {
+                completed++;
+                if (completed % 25 === 0 || completed === items.length) {
+                    log(`  ${label}: ${completed}/${items.length}${failed ? ' (' + failed + ' failed)' : ''}`, 'line-info');
+                }
+                return; // already written in a previous run — skip, no network call at all
+            }
+            let ok = false;
+            for (let attempt = 0; attempt <= 2 && !ok; attempt++) {
+                try {
+                    await withTimeout(restSet(path, dataFn(item), getToken), 20000, path);
+                    ok = true;
+                    markDone(path);
+                } catch (err) {
+                    if (attempt < 2) {
+                        const isQuota = err.status === 429;
+                        await new Promise(r => setTimeout(r, isQuota ? 5000 * (attempt + 1) : 500));
+                    } else {
+                        failed++;
+                        log(`  ❌ Failed permanently: ${path} — ${err.message}`, 'line-err');
+                    }
+                }
+            }
+            completed++;
+            if (completed % 25 === 0 || completed === items.length) {
+                log(`  ${label}: ${completed}/${items.length}${failed ? ' (' + failed + ' failed)' : ''}`, 'line-info');
+            }
+            await new Promise(r => setTimeout(r, 200));
+        }
+
+        async function worker() {
+            while (queue.length) {
+                const item = queue.shift();
+                await writeOne(item);
+            }
+        }
+
+        await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+        return failed;
+    }
+
+    window.testConnection = async function () {
+        const testBtn = document.getElementById('testBtn');
+        testBtn.disabled = true;
+        logEl.innerHTML = '';
+
+        const fbEmail = document.getElementById('fbEmail').value.trim();
+        const fbPassword = document.getElementById('fbPassword').value;
+        if (!fbEmail || !fbPassword) {
+            log('❌ Fill in the Firebase Admin Email/Password fields first.', 'line-err');
+            testBtn.disabled = false;
+            return;
+        }
+
+        try {
+            log('Signing into Firebase...', 'line-info');
+            const cred = await withTimeout(signInWithEmailAndPassword(auth, fbEmail, fbPassword), 15000, 'sign-in');
+            log('✅ Sign-in successful', 'line-ok');
+
+            await withTimeout(cred.user.getIdToken(), 10000, 'get ID token');
+            log('✅ Got token', 'line-ok');
+
+            log('Writing one test document via REST...', 'line-info');
+            await withTimeout(restSet('materials/_migrationPingDoc', { ok: true, at: Date.now() }, () => cred.user.getIdToken()), 15000, 'test write');
+            log('✅ Write successful', 'line-ok');
+            log('', null);
+            log('🎉 Connection confirmed working — safe to run the real migration.', 'line-ok');
+        } catch (err) {
+            log('❌ ' + err.message, 'line-err');
+            console.error(err);
+        } finally {
+            testBtn.disabled = false;
+        }
+    };
+
+    window.runMigration = async function () {
+        const runBtn = document.getElementById('runBtn');
+        runBtn.disabled = true;
+        logEl.innerHTML = '';
+
+        const appsScriptEmail = document.getElementById('adminEmail').value.trim();
+        const appsScriptPassword = document.getElementById('adminPassword').value;
+        const fbEmail = document.getElementById('fbEmail').value.trim();
+        const fbPassword = document.getElementById('fbPassword').value;
+
+        if (!appsScriptEmail || !appsScriptPassword || !fbEmail || !fbPassword) {
+            log('❌ Please fill in all four fields.', 'line-err');
+            runBtn.disabled = false;
+            return;
+        }
+
+        try {
+            log('Signing into Firebase as admin...', 'line-info');
+            const cred = await signInWithEmailAndPassword(auth, fbEmail, fbPassword);
+            // A function, not a static string — calling getIdToken() again
+            // automatically returns a fresh token once the previous one is
+            // expired or close to it (Firebase tokens last ~1 hour). The
+            // earlier version fetched the token ONCE and reused that same
+            // string for the entire migration; once a run took longer than
+            // an hour (very possible at a deliberately throttled pace),
+            // every write after that point failed with 401 Unauthenticated
+            // — that's exactly what happened last run, right at the end.
+            const getToken = () => cred.user.getIdToken();
+            await getToken();
+            log('✅ Firebase admin sign-in successful', 'line-ok');
+
+            log('Fetching all data from Apps Script (this can take 15-30s for a large dataset)...', 'line-info');
+            const res = await fetch(API_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action: 'adminExportAll', email: appsScriptEmail, password: appsScriptPassword })
+            });
+            const data = await res.json();
+            if (!data.success) {
+                log('❌ Export failed: ' + (data.error || 'unknown error — check your Apps Script admin email/password'), 'line-err');
+                runBtn.disabled = false;
+                return;
+            }
+            log(`✅ Fetched: ${data.tests.length} tests, ${data.materials.length} materials, ${data.folders.length} folders, ${data.videos.length} videos, ${data.courses.length} courses, ${data.students.length} students, ${data.results.length} results`, 'line-ok');
+
+            log('Writing tests...', 'line-info');
+            await writeAllRest(
+                data.tests,
+                t => `tests/${t.id}`,
+                t => { const { questions, ...meta } = t; return meta; },
+                getToken, 'tests'
+            );
+
+            let totalQuestions = 0;
+            for (const t of data.tests) {
+                if (!t.questions || !t.questions.length) continue;
+                totalQuestions += t.questions.length;
+                const indexed = t.questions.map((q, i) => ({ ...q, _i: i }));
+                await writeAllRest(
+                    indexed,
+                    q => `tests/${t.id}/questions/q${q._i}`,
+                    q => { const { correctAnswer, _i, ...pub } = q; return { order: _i, ...pub }; },
+                    getToken, `questions for "${t.title}"`
+                );
+                await writeAllRest(
+                    indexed,
+                    q => `tests/${t.id}/answerKey/q${q._i}`,
+                    q => ({ correctAnswer: q.correctAnswer }),
+                    getToken, `answer keys for "${t.title}"`
+                );
+            }
+            log(`✅ ${data.tests.length} tests + ${totalQuestions} questions written`, 'line-ok');
+
+            log('Writing materials, folders, videos, courses...', 'line-info');
+            await writeAllRest(data.materials, m => `materials/${m.id}`, m => m, getToken, 'materials');
+            await writeAllRest(data.folders, f => `folders/${f.id}`, f => f, getToken, 'folders');
+            await writeAllRest(data.videos, v => `videos/${v.id}`, v => v, getToken, 'videos');
+            await writeAllRest(data.courses, c => `courses/${c.id}`, c => c, getToken, 'courses');
+            log('✅ Materials, folders, videos, courses written', 'line-ok');
+
+            log('Writing students and results...', 'line-info');
+            await writeAllRest(data.students, s => `students/${s.id}`, s => s, getToken, 'students');
+            await writeAllRest(data.results, r => `results/${r.id}`, r => r, getToken, 'results');
+            log('✅ Students and results written', 'line-ok');
+
+            log('', null);
+            log('🎉 MIGRATION COMPLETE', 'line-ok');
+            log(`Final counts — tests: ${data.tests.length}, questions: ${totalQuestions}, materials: ${data.materials.length}, folders: ${data.folders.length}, videos: ${data.videos.length}, courses: ${data.courses.length}, students: ${data.students.length}, results: ${data.results.length}`, 'line-ok');
+            log('Go check the Firestore "Data" tab now and spot-check a few documents against your Sheet.', 'line-info');
+
+        } catch (err) {
+            log('❌ Migration failed: ' + err.message, 'line-err');
+            console.error(err);
+        } finally {
+            saveDone(); // flush any progress made this run, whether it completed or stopped partway
+            runBtn.disabled = false;
+        }
+    };
+</script>
+
+</body>
+</html>
