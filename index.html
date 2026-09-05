@@ -34,7 +34,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
         import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDVKEABR6sNudb8VxreOuxxPB4AIbNvZAw",
@@ -53,6 +53,7 @@
         // setup), not the SDK's automatic canonical default.
         window.db = getFirestore(firebaseApp, 'default');
         window.auth = getAuth(firebaseApp);
+        window.firebaseSignOut = () => signOut(window.auth);
 
         // Bridge login — see the comment at every call site in
         // submitStudentLogin/tryAutoLoginStudent for the full picture.
@@ -91,6 +92,43 @@
                     }
                 } else {
                     console.warn('[Firebase bridge] sign-in attempt failed for', email, err.code);
+                }
+            }
+        };
+
+        // Same bridging idea as bridgeStudentToFirebaseAuth, but for the
+        // single admin account. This one matters more: your Firestore
+        // security rules gate admin WRITES on request.auth actually being
+        // signed in as dekasirclasses@gmail.com, so until this resolves,
+        // every admin write attempt will fail permission checks even
+        // though the old Apps Script login succeeded.
+        //
+        // Unlike the student version, callers AWAIT this (see
+        // submitAdminLogin / tryAutoLoginAdmin) rather than firing it and
+        // forgetting, so that by the time the admin panel is usable,
+        // window.auth.currentUser is guaranteed to be the signed-in admin
+        // (or the bridge has definitively failed and been logged).
+        // Returns true/false so calling code can warn the admin if
+        // Firestore writes won't work this session, without blocking the
+        // Apps-Script-approved login itself.
+        window.bridgeAdminToFirebaseAuth = async function (email, password) {
+            if (!email || !password) return false;
+            const fbPassword = password.length < 6 ? (password + '_dsc00').slice(0, 6) : password;
+            try {
+                await signInWithEmailAndPassword(window.auth, email, fbPassword);
+                return true;
+            } catch (err) {
+                if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+                    try {
+                        await createUserWithEmailAndPassword(window.auth, email, fbPassword);
+                        return true;
+                    } catch (err2) {
+                        console.warn('[Firebase admin bridge] could not create account for', email, err2.code);
+                        return false;
+                    }
+                } else {
+                    console.warn('[Firebase admin bridge] sign-in attempt failed for', email, err.code);
+                    return false;
                 }
             }
         };
@@ -5888,6 +5926,16 @@
             adminCreds = { email: email, password: pass };
             currentUser = { name: 'Admin', role: 'admin' };
             try { localStorage.setItem('dekaAdminSession', JSON.stringify(adminCreds)); } catch (_) {}
+            // Awaited (unlike the student bridge) — admin writes will
+            // depend on this Firebase Auth session, so we make sure it's
+            // settled before handing over the admin panel. Still never
+            // blocks the login itself: a bridge failure just shows a
+            // warning toast, since the old Apps Script check already
+            // approved these credentials.
+            if (window.bridgeAdminToFirebaseAuth) {
+                const bridged = await window.bridgeAdminToFirebaseAuth(email, pass);
+                if (!bridged) showToast('Signed in, but Firestore sync could not authenticate — some admin actions may not save yet.', 'error');
+            }
             completeLogin();
         }
 
@@ -5908,6 +5956,7 @@
                 }
                 adminCreds = saved;
                 currentUser = { name: 'Admin', role: 'admin' };
+                if (window.bridgeAdminToFirebaseAuth) await window.bridgeAdminToFirebaseAuth(saved.email, saved.password);
                 completeLogin();
                 return true;
             } catch (_) {
@@ -5974,6 +6023,10 @@
             adminCreds = { email: '', password: '' };
             try { localStorage.removeItem('dekaStudentSession'); } catch (_) {}
             try { localStorage.removeItem('dekaAdminSession'); } catch (_) {}
+            // Clear the Firebase Auth session too, so the next person to
+            // use this device/browser doesn't inherit admin's Firestore
+            // write permissions. Fire-and-forget — never blocks logout.
+            if (window.firebaseSignOut) window.firebaseSignOut().catch(() => {});
 
             // Force-close every overlay before showing the login screen. If
             // one was left open (e.g. logging out mid test-review), it would
