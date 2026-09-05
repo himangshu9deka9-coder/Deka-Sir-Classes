@@ -234,6 +234,23 @@
                 if (ops >= 450) await flush();
             }
 
+            // The Firestore Web SDK — unlike the REST calls
+            // migrate-to-firebase.html uses — throws
+            // "Unsupported field value: undefined" and aborts the
+            // WHOLE batch if ANY field anywhere in the object is
+            // undefined (not null, not missing — undefined). A
+            // brand-new test/material/etc. created straight in the
+            // admin UI can easily have an optional field sitting at
+            // undefined rather than "", 0, or null, so this is a real
+            // and likely failure mode, not a hypothetical one.
+            // JSON-round-tripping silently drops undefined-valued
+            // keys entirely (matching what the REST-based migration
+            // tool already does via plain JSON.stringify), which is
+            // exactly the same, safe behavior — just applied here too.
+            function stripUndefined(obj) {
+                return JSON.parse(JSON.stringify(obj));
+            }
+
             // --- Flat collections: materials, folders, videos, courses ---
             // No subcollections, no split fields — just "does this
             // exact object match what Firestore already has."
@@ -243,7 +260,7 @@
                 for (const item of mergedItems) {
                     const prev = baselineById.get(item.id);
                     if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) {
-                        batch.set(doc(dbRef, name, item.id), item);
+                        batch.set(doc(dbRef, name, item.id), stripUndefined(item));
                         await noteOp(1);
                     }
                 }
@@ -269,7 +286,7 @@
                 const baselineEntry = baselineTestsById.get(test.id);
                 const baselineMeta = baselineEntry ? (({ questions: _q, ...m }) => m)(baselineEntry) : null;
                 if (!baselineMeta || JSON.stringify(baselineMeta) !== JSON.stringify(meta)) {
-                    batch.set(doc(dbRef, 'tests', test.id), meta);
+                    batch.set(doc(dbRef, 'tests', test.id), stripUndefined(meta));
                     await noteOp(1);
                 }
 
@@ -279,7 +296,7 @@
                 if (questionsChanged) {
                     for (let i = 0; i < questions.length; i++) {
                         const { correctAnswer, ...pub } = questions[i];
-                        batch.set(doc(dbRef, 'tests', test.id, 'questions', 'q' + i), { order: i, ...pub });
+                        batch.set(doc(dbRef, 'tests', test.id, 'questions', 'q' + i), stripUndefined({ order: i, ...pub }));
                         batch.set(doc(dbRef, 'tests', test.id, 'answerKey', 'q' + i), { correctAnswer: correctAnswer ?? null });
                         await noteOp(2);
                     }
@@ -5193,15 +5210,39 @@
                     // syncContentToFirestore's own comment for the full
                     // reasoning on what gets diffed and why.
                     if (window.syncContentToFirestore) {
-                        window.syncContentToFirestore({
-                            mergedTests, mergedMaterials, mergedFolders, mergedVideos, mergedCourses,
-                            baselineTests: normalized.tests, baselineMaterials: normalized.materials,
-                            baselineFolders: normalized.folders, baselineVideos: normalized.videos,
-                            baselineCourses: fresh.courses || []
-                        }).catch(err => {
-                            console.warn('[Firestore] mirroring this save failed — Sheets is saved correctly, but Firestore may be stale until the next save or a manual migration re-run:', err);
-                            showToast('Saved, but Firestore sync had a problem — students may briefly see stale content', 'error');
-                        });
+                        (async () => {
+                            try {
+                                // Self-healing: if the Firebase Auth
+                                // session somehow isn't live right now
+                                // (e.g. it never finished bridging
+                                // earlier, or got signed out some
+                                // other way), every write below would
+                                // fail permission checks with a vague
+                                // error. Re-bridge using the admin
+                                // credentials already held in memory
+                                // for this session before attempting
+                                // anything, so a dropped session
+                                // self-heals instead of quietly
+                                // failing every save until logout/login.
+                                if (!window.auth?.currentUser && adminCreds.email && adminCreds.password && window.bridgeAdminToFirebaseAuth) {
+                                    await window.bridgeAdminToFirebaseAuth(adminCreds.email, adminCreds.password);
+                                }
+                                await window.syncContentToFirestore({
+                                    mergedTests, mergedMaterials, mergedFolders, mergedVideos, mergedCourses,
+                                    baselineTests: normalized.tests, baselineMaterials: normalized.materials,
+                                    baselineFolders: normalized.folders, baselineVideos: normalized.videos,
+                                    baselineCourses: fresh.courses || []
+                                });
+                            } catch (err) {
+                                // The real reason (permission-denied,
+                                // invalid data, network, etc.) is
+                                // logged here rather than swallowed —
+                                // check this on the next failure
+                                // instead of guessing blind.
+                                console.warn('[Firestore] mirroring this save failed — Sheets is saved correctly, but Firestore may be stale until the next save or a manual migration re-run:', err);
+                                showToast('Saved, but Firestore sync had a problem (' + (err?.code || err?.message || 'unknown') + ') — students may briefly see stale content', 'error');
+                            }
+                        })();
                     }
                 }
             } catch (err) {
@@ -8021,6 +8062,7 @@
                             <button class="btn btn-outline btn-sm" onclick="exportTestAsJSON('${t.id}')"><i class="fas fa-download"></i></button>
                             <button class="btn btn-danger btn-sm" onclick="deleteTest('${t.id}')"><i class="fas fa-trash"></i></button>
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
+                            <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
                             ` : ''}
                         </div>
                     </div>
@@ -8074,6 +8116,7 @@
                             <button class="btn btn-danger btn-sm" onclick="deleteTest('${t.id}')"><i class="fas fa-trash"></i></button>
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
                             <button class="btn ${t.qnaButtonHidden ? 'btn-outline' : 'btn-success'} btn-sm" onclick="toggleTestQnaButton('${t.id}')" title="${t.qnaButtonHidden ? 'Show the Start Q&A button to students' : 'Hide the Start Q&A button from students'}"><i class="fas fa-${t.qnaButtonHidden ? 'eye-slash' : 'eye'}"></i> Q&amp;A Btn</button>
+                            <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
                             ` : ''}
                         </div>
                     </div>
@@ -8648,6 +8691,19 @@
             renderAllFolders();
             renderAdminTests();
             showToast('Test deleted', 'success');
+        }
+
+        // Opens this exact test's document directly in the Firebase
+        // console — a shortcut around the fact that Firestore document
+        // IDs (e.g. "mtnwleet_3ycon") are the same opaque, non-human-
+        // readable IDs the Sheet has always used internally. Rather
+        // than scrolling or filtering through 180+ tests by hand,
+        // this jumps straight to the right one. Uses the SAME "default"
+        // named database as the rest of the app (see window.db's setup
+        // comment at the top of this file).
+        function openTestInFirestore(testId) {
+            const url = 'https://console.firebase.google.com/project/deka-sir-classes-b5e95/firestore/databases/default/data/~2Ftests~2F' + encodeURIComponent(testId);
+            window.open(url, '_blank');
         }
 
         // Exports a test's questions back to the same JSON shape the Test
