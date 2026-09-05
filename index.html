@@ -33,7 +33,7 @@
     not a module, so it can't `import` directly). -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
-        import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 
         const firebaseConfig = {
@@ -172,6 +172,141 @@
                 console.warn('[Firestore] content read failed, will fall back to Apps Script this cycle:', err);
                 return null;
             }
+        };
+
+        // ============================================================
+        // STAGE 6 — mirror every successful admin save into Firestore,
+        // right after Apps Script's own "syncStore" write already
+        // confirmed success (see pushStoreToServerInner's call site).
+        // Sheets stays the write of record; this just keeps Firestore's
+        // read-side copy (what the live app actually reads from — see
+        // fetchFirestoreContent above) in step automatically, closing
+        // the gap where a new/edited mock only became visible after
+        // manually re-running migrate-to-firebase.html.
+        //
+        // Deliberately best-effort and NEVER throws back at the caller:
+        // if this fails, the save already succeeded in Sheets (the part
+        // that matters for not losing data), and the next successful
+        // admin save — or a manual migration re-run — overwrites
+        // Firestore with correct data again. The caller shows a toast
+        // on failure so a repeated, silent drift doesn't go unnoticed.
+        //
+        // `baselineTests/Materials/Folders/Videos/Courses` = the fresh,
+        // pre-merge server copy (pushStoreToServerInner's `normalized`/
+        // `fresh`, from an apiGet('full=1') pull) — used as the "what
+        // did this used to be" reference for two things:
+        //   1. Detecting deletions (an id present in baseline but
+        //      missing from the merged/new list was removed this save).
+        //   2. Detecting whether a test's QUESTION CONTENT actually
+        //      changed this save — full=1 guarantees baseline has every
+        //      test's real questions regardless of whether this admin
+        //      session opened that particular test, unlike the local
+        //      store, which sits at questions:[] for anything unopened.
+        //      Without this, an unrelated one-field edit (e.g. toggling
+        //      "published" on test A) would look like every OTHER
+        //      test's questions "changed" too, and re-write all ~180
+        //      tests' question subcollections on every single save.
+        // Metadata (cheap, one doc per test) still resyncs for every
+        // test whose metadata actually changed; only a test whose
+        // .questions content itself changed gets its (potentially
+        // large) questions/answerKey subcollections rewritten.
+        window.syncContentToFirestore = async function (opts) {
+            const {
+                mergedTests, mergedMaterials, mergedFolders, mergedVideos, mergedCourses,
+                baselineTests, baselineMaterials, baselineFolders, baselineVideos, baselineCourses
+            } = opts;
+            const dbRef = window.db;
+
+            // Firestore batches cap at 500 writes; 450 leaves headroom
+            // for a delete-pair (question+answerKey) landing right at
+            // the boundary without needing to split it across batches.
+            let batch = writeBatch(dbRef);
+            let ops = 0;
+            async function flush() {
+                if (ops > 0) {
+                    await batch.commit();
+                    batch = writeBatch(dbRef);
+                    ops = 0;
+                }
+            }
+            async function noteOp(n) {
+                ops += n;
+                if (ops >= 450) await flush();
+            }
+
+            // --- Flat collections: materials, folders, videos, courses ---
+            // No subcollections, no split fields — just "does this
+            // exact object match what Firestore already has."
+            async function syncFlatCollection(name, mergedItems, baselineItems) {
+                const mergedById = new Map(mergedItems.map(i => [i.id, i]));
+                const baselineById = new Map(baselineItems.map(i => [i.id, i]));
+                for (const item of mergedItems) {
+                    const prev = baselineById.get(item.id);
+                    if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) {
+                        batch.set(doc(dbRef, name, item.id), item);
+                        await noteOp(1);
+                    }
+                }
+                for (const id of baselineById.keys()) {
+                    if (!mergedById.has(id)) {
+                        batch.delete(doc(dbRef, name, id));
+                        await noteOp(1);
+                    }
+                }
+            }
+            await syncFlatCollection('materials', mergedMaterials, baselineMaterials);
+            await syncFlatCollection('folders', mergedFolders, baselineFolders);
+            await syncFlatCollection('videos', mergedVideos, baselineVideos);
+            await syncFlatCollection('courses', mergedCourses, baselineCourses);
+            await flush();
+
+            // --- Tests: metadata doc + questions/answerKey subcollections ---
+            const mergedTestsById = new Map(mergedTests.map(t => [t.id, t]));
+            const baselineTestsById = new Map(baselineTests.map(t => [t.id, t]));
+
+            for (const test of mergedTests) {
+                const { questions, ...meta } = test;
+                const baselineEntry = baselineTestsById.get(test.id);
+                const baselineMeta = baselineEntry ? (({ questions: _q, ...m }) => m)(baselineEntry) : null;
+                if (!baselineMeta || JSON.stringify(baselineMeta) !== JSON.stringify(meta)) {
+                    batch.set(doc(dbRef, 'tests', test.id), meta);
+                    await noteOp(1);
+                }
+
+                const prevQuestions = (baselineEntry && baselineEntry.questions) || [];
+                const questionsChanged = questions && questions.length &&
+                    JSON.stringify(prevQuestions) !== JSON.stringify(questions);
+                if (questionsChanged) {
+                    for (let i = 0; i < questions.length; i++) {
+                        const { correctAnswer, ...pub } = questions[i];
+                        batch.set(doc(dbRef, 'tests', test.id, 'questions', 'q' + i), { order: i, ...pub });
+                        batch.set(doc(dbRef, 'tests', test.id, 'answerKey', 'q' + i), { correctAnswer: correctAnswer ?? null });
+                        await noteOp(2);
+                    }
+                    // Firestore doesn't shrink a subcollection on its
+                    // own — explicitly remove any leftover higher-index
+                    // docs if this save has fewer questions than before
+                    // (a question was deleted from the test).
+                    for (let i = questions.length; i < prevQuestions.length; i++) {
+                        batch.delete(doc(dbRef, 'tests', test.id, 'questions', 'q' + i));
+                        batch.delete(doc(dbRef, 'tests', test.id, 'answerKey', 'q' + i));
+                        await noteOp(2);
+                    }
+                }
+            }
+            for (const [id, baselineEntry] of baselineTestsById) {
+                if (!mergedTestsById.has(id)) {
+                    batch.delete(doc(dbRef, 'tests', id));
+                    await noteOp(1);
+                    const oldCount = (baselineEntry.questions || []).length;
+                    for (let i = 0; i < oldCount; i++) {
+                        batch.delete(doc(dbRef, 'tests', id, 'questions', 'q' + i));
+                        batch.delete(doc(dbRef, 'tests', id, 'answerKey', 'q' + i));
+                        await noteOp(2);
+                    }
+                }
+            }
+            await flush();
         };
     </script>
     <style>
@@ -5046,6 +5181,28 @@
                     // the syncFromServer snapshot above).
                     lastSyncedSnapshot = deepClone({ tests: mergedTests, materials: mergedMaterials, folders: mergedFolders, videos: mergedVideos, courses: mergedCourses });
                     if (typeof renderAll === 'function') renderAll();
+
+                    // STAGE 6: mirror this save into Firestore too, now
+                    // that Sheets (the write of record) has confirmed
+                    // it. Fire-and-forget on purpose — Firestore sync
+                    // is a nice-to-have for read freshness, never a
+                    // reason to make the admin wait on a second network
+                    // round-trip after they already saw "✅ Saved", and
+                    // never a reason to treat this save as failed if
+                    // only this part has trouble. See
+                    // syncContentToFirestore's own comment for the full
+                    // reasoning on what gets diffed and why.
+                    if (window.syncContentToFirestore) {
+                        window.syncContentToFirestore({
+                            mergedTests, mergedMaterials, mergedFolders, mergedVideos, mergedCourses,
+                            baselineTests: normalized.tests, baselineMaterials: normalized.materials,
+                            baselineFolders: normalized.folders, baselineVideos: normalized.videos,
+                            baselineCourses: fresh.courses || []
+                        }).catch(err => {
+                            console.warn('[Firestore] mirroring this save failed — Sheets is saved correctly, but Firestore may be stale until the next save or a manual migration re-run:', err);
+                            showToast('Saved, but Firestore sync had a problem — students may briefly see stale content', 'error');
+                        });
+                    }
                 }
             } catch (err) {
                 clearTimeout(savingToastTimer);
