@@ -234,6 +234,29 @@
                 if (ops >= 450) await flush();
             }
 
+            // A single malformed item must never take down the entire
+            // sync — this is the actual bug behind "my delete didn't
+            // stick" and "my new mock never appeared": one bad item
+            // earlier in the loop threw, and that exception skipped
+            // every write and every deletion still queued after it in
+            // this same function call, including ones that had nothing
+            // to do with the bad item. Every per-item write below goes
+            // through this wrapper instead of being called directly, so
+            // one bad test/material/etc. gets logged and skipped, while
+            // everything else still gets synced normally.
+            const skipped = [];
+            async function safeWrite(label, fn) {
+                try {
+                    await fn();
+                } catch (err) {
+                    skipped.push(label);
+                    console.warn('[Firestore] skipped ' + label + ' — sync continues for everything else:', err);
+                }
+            }
+            function hasValidId(item) {
+                return item && typeof item.id === 'string' && item.id.length > 0;
+            }
+
             // The Firestore Web SDK — unlike the REST calls
             // migrate-to-firebase.html uses — throws
             // "Unsupported field value: undefined" and aborts the
@@ -255,19 +278,24 @@
             // No subcollections, no split fields — just "does this
             // exact object match what Firestore already has."
             async function syncFlatCollection(name, mergedItems, baselineItems) {
-                const mergedById = new Map(mergedItems.map(i => [i.id, i]));
-                const baselineById = new Map(baselineItems.map(i => [i.id, i]));
+                const mergedById = new Map(mergedItems.filter(hasValidId).map(i => [i.id, i]));
+                const baselineById = new Map(baselineItems.filter(hasValidId).map(i => [i.id, i]));
                 for (const item of mergedItems) {
+                    if (!hasValidId(item)) { skipped.push(name + ' item with missing/invalid id (title: ' + (item && item.title) + ')'); continue; }
                     const prev = baselineById.get(item.id);
                     if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) {
-                        batch.set(doc(dbRef, name, item.id), stripUndefined(item));
-                        await noteOp(1);
+                        await safeWrite(name + '/' + item.id, async () => {
+                            batch.set(doc(dbRef, name, item.id), stripUndefined(item));
+                            await noteOp(1);
+                        });
                     }
                 }
                 for (const id of baselineById.keys()) {
                     if (!mergedById.has(id)) {
-                        batch.delete(doc(dbRef, name, id));
-                        await noteOp(1);
+                        await safeWrite('delete ' + name + '/' + id, async () => {
+                            batch.delete(doc(dbRef, name, id));
+                            await noteOp(1);
+                        });
                     }
                 }
             }
@@ -278,16 +306,19 @@
             await flush();
 
             // --- Tests: metadata doc + questions/answerKey subcollections ---
-            const mergedTestsById = new Map(mergedTests.map(t => [t.id, t]));
-            const baselineTestsById = new Map(baselineTests.map(t => [t.id, t]));
+            const mergedTestsById = new Map(mergedTests.filter(hasValidId).map(t => [t.id, t]));
+            const baselineTestsById = new Map(baselineTests.filter(hasValidId).map(t => [t.id, t]));
 
             for (const test of mergedTests) {
+                if (!hasValidId(test)) { skipped.push('test with missing/invalid id (title: ' + test?.title + ')'); continue; }
                 const { questions, ...meta } = test;
                 const baselineEntry = baselineTestsById.get(test.id);
                 const baselineMeta = baselineEntry ? (({ questions: _q, ...m }) => m)(baselineEntry) : null;
                 if (!baselineMeta || JSON.stringify(baselineMeta) !== JSON.stringify(meta)) {
-                    batch.set(doc(dbRef, 'tests', test.id), stripUndefined(meta));
-                    await noteOp(1);
+                    await safeWrite('tests/' + test.id + ' (metadata)', async () => {
+                        batch.set(doc(dbRef, 'tests', test.id), stripUndefined(meta));
+                        await noteOp(1);
+                    });
                 }
 
                 const prevQuestions = (baselineEntry && baselineEntry.questions) || [];
@@ -295,35 +326,59 @@
                     JSON.stringify(prevQuestions) !== JSON.stringify(questions);
                 if (questionsChanged) {
                     for (let i = 0; i < questions.length; i++) {
-                        const { correctAnswer, ...pub } = questions[i];
-                        batch.set(doc(dbRef, 'tests', test.id, 'questions', 'q' + i), stripUndefined({ order: i, ...pub }));
-                        batch.set(doc(dbRef, 'tests', test.id, 'answerKey', 'q' + i), { correctAnswer: correctAnswer ?? null });
-                        await noteOp(2);
+                        const q = questions[i] || {};
+                        const { correctAnswer, ...pub } = q;
+                        await safeWrite('tests/' + test.id + '/questions/q' + i, async () => {
+                            batch.set(doc(dbRef, 'tests', test.id, 'questions', 'q' + i), stripUndefined({ order: i, ...pub }));
+                            await noteOp(1);
+                        });
+                        await safeWrite('tests/' + test.id + '/answerKey/q' + i, async () => {
+                            batch.set(doc(dbRef, 'tests', test.id, 'answerKey', 'q' + i), stripUndefined({ correctAnswer: correctAnswer ?? null }));
+                            await noteOp(1);
+                        });
                     }
                     // Firestore doesn't shrink a subcollection on its
                     // own — explicitly remove any leftover higher-index
                     // docs if this save has fewer questions than before
                     // (a question was deleted from the test).
                     for (let i = questions.length; i < prevQuestions.length; i++) {
-                        batch.delete(doc(dbRef, 'tests', test.id, 'questions', 'q' + i));
-                        batch.delete(doc(dbRef, 'tests', test.id, 'answerKey', 'q' + i));
-                        await noteOp(2);
+                        await safeWrite('delete tests/' + test.id + '/questions+answerKey/q' + i, async () => {
+                            batch.delete(doc(dbRef, 'tests', test.id, 'questions', 'q' + i));
+                            batch.delete(doc(dbRef, 'tests', test.id, 'answerKey', 'q' + i));
+                            await noteOp(2);
+                        });
                     }
                 }
             }
             for (const [id, baselineEntry] of baselineTestsById) {
                 if (!mergedTestsById.has(id)) {
-                    batch.delete(doc(dbRef, 'tests', id));
-                    await noteOp(1);
+                    await safeWrite('delete tests/' + id, async () => {
+                        batch.delete(doc(dbRef, 'tests', id));
+                        await noteOp(1);
+                    });
                     const oldCount = (baselineEntry.questions || []).length;
                     for (let i = 0; i < oldCount; i++) {
-                        batch.delete(doc(dbRef, 'tests', id, 'questions', 'q' + i));
-                        batch.delete(doc(dbRef, 'tests', id, 'answerKey', 'q' + i));
-                        await noteOp(2);
+                        await safeWrite('delete tests/' + id + '/questions+answerKey/q' + i, async () => {
+                            batch.delete(doc(dbRef, 'tests', id, 'questions', 'q' + i));
+                            batch.delete(doc(dbRef, 'tests', id, 'answerKey', 'q' + i));
+                            await noteOp(2);
+                        });
                     }
                 }
             }
             await flush();
+
+            // Surface what got skipped rather than hiding it — the
+            // caller (pushStoreToServerInner) shows this in its toast
+            // so a recurring problem with one specific item is visible
+            // and fixable, instead of silently and permanently failing
+            // to sync just that one thing every single save.
+            if (skipped.length) {
+                console.warn('[Firestore] sync completed with ' + skipped.length + ' item(s) skipped:', skipped);
+                const err = new Error(skipped.length + ' item(s) skipped: ' + skipped.slice(0, 3).join('; ') + (skipped.length > 3 ? '…' : ''));
+                err.code = 'partial';
+                throw err;
+            }
         };
     </script>
     <style>
