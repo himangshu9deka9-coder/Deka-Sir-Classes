@@ -182,6 +182,18 @@
         return fields;
     }
 
+    // MaterialViews/VideoWatch rows have no "id" column in the Sheet —
+    // they're one row per (student, item), updated in place rather than
+    // appended (see LATEST_DEKA_CODE.gs's own comment on those sheets).
+    // Firestore still needs SOME document ID, so this builds a stable,
+    // deterministic one out of the same (student, item) pair the Sheet
+    // already keys on — re-running the migration lands on the exact
+    // same document every time, matching the "safe to re-run" guarantee
+    // this tool gives everywhere else.
+    function sanitizeKeyPart(s) {
+        return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    }
+
     async function restSet(path, data, getToken) {
         const idToken = await getToken();
         const res = await fetch(`${FIRESTORE_BASE}/${path}`, {
@@ -331,7 +343,7 @@
                 runBtn.disabled = false;
                 return;
             }
-            log(`✅ Fetched: ${data.tests.length} tests, ${data.materials.length} materials, ${data.folders.length} folders, ${data.videos.length} videos, ${data.courses.length} courses, ${data.students.length} students, ${data.results.length} results`, 'line-ok');
+            log(`✅ Fetched: ${data.tests.length} tests, ${data.materials.length} materials, ${data.folders.length} folders, ${data.videos.length} videos, ${data.courses.length} courses, ${data.students.length} students, ${data.results.length} results, ${data.purchases.length} purchases, ${data.itemAccess.length} item access records, ${data.materialViews.length} material views, ${data.videoWatch.length} video watch records`, 'line-ok');
 
             log('Writing tests...', 'line-info');
             await writeAllRest(
@@ -373,9 +385,16 @@
             await writeAllRest(data.results, r => `results/${r.id}`, r => r, getToken, 'results');
             log('✅ Students and results written', 'line-ok');
 
+            log('Writing tracking data (purchases, item access, material views, video watch)...', 'line-info');
+            await writeAllRest(data.purchases, p => `purchases/${p.id}`, p => p, getToken, 'purchases');
+            await writeAllRest(data.itemAccess, a => `itemAccess/${a.id}`, a => a, getToken, 'itemAccess');
+            await writeAllRest(data.materialViews, m => `materialViews/${sanitizeKeyPart(m.studentEmail)}__${m.materialId}`, m => m, getToken, 'materialViews');
+            await writeAllRest(data.videoWatch, v => `videoWatch/${sanitizeKeyPart(v.studentEmail)}__${v.videoId}`, v => v, getToken, 'videoWatch');
+            log('✅ Tracking data written', 'line-ok');
+
             log('', null);
             log('🎉 MIGRATION COMPLETE', 'line-ok');
-            log(`Final counts — tests: ${data.tests.length}, questions: ${totalQuestions}, materials: ${data.materials.length}, folders: ${data.folders.length}, videos: ${data.videos.length}, courses: ${data.courses.length}, students: ${data.students.length}, results: ${data.results.length}`, 'line-ok');
+            log(`Final counts — tests: ${data.tests.length}, questions: ${totalQuestions}, materials: ${data.materials.length}, folders: ${data.folders.length}, videos: ${data.videos.length}, courses: ${data.courses.length}, students: ${data.students.length}, results: ${data.results.length}, purchases: ${data.purchases.length}, itemAccess: ${data.itemAccess.length}, materialViews: ${data.materialViews.length}, videoWatch: ${data.videoWatch.length}`, 'line-ok');
             log('Go check the Firestore "Data" tab now and spot-check a few documents against your Sheet.', 'line-info');
 
         } catch (err) {
