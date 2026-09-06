@@ -10033,10 +10033,14 @@
         }
         const FEATURED_SLIDE_INTERVAL_MS = 2500; // time each slide stays up before advancing
 
+        // Fingerprint of whatever was last actually rendered into
+        // #dashboardFeaturedSliders — see the skip-check inside
+        // renderDashboardFeaturedSliders for why this exists.
+        let lastFeaturedSlidersSignature = null;
+
         function renderDashboardFeaturedSliders(store) {
             const el = document.getElementById('dashboardFeaturedSliders');
             if (!el) return;
-            clearFeaturedSliderTimers();
 
             const isAdmin = currentUser?.role === 'admin';
             const sections = [
@@ -10061,6 +10065,33 @@
             // No cap here — every featured item shows, however many there
             // are; the carousel scrolls to fit them all rather than only
             // ever showing the first 3.
+
+            // Skip rebuilding the DOM entirely when nothing featured-
+            // related has actually changed since the last render. This
+            // function runs on every background sync poll (~every
+            // 20-30s) whenever Dashboard is the active page (see
+            // renderAll's own comment on why it's still called at all
+            // even when nothing changed) — without this check, every
+            // single poll tore down and recreated every slide's <img>,
+            // reset each carousel's scroll position back to slide 0,
+            // and restarted the fade/slide-in CSS animation (the
+            // --stagger timing). That teardown-and-rebuild, repeating
+            // every poll, IS what the visible "blink" was — not a
+            // rendering bug so much as re-rendering unchanged content
+            // unnecessarily. A real change (admin features/unfeatures
+            // something, edits a price, adds a thumbnail, etc.) still
+            // shows up immediately, since the signature covers exactly
+            // the fields actually rendered below.
+            const signature = JSON.stringify(sections.map(s => [
+                s.key, s.items.map(it => [it.id, it.thumbnailFileId || '', it.locked, it.price || 0, it.title])
+            ]));
+            if (signature === lastFeaturedSlidersSignature && el.dataset.rendered === '1') {
+                return;
+            }
+            lastFeaturedSlidersSignature = signature;
+            el.dataset.rendered = '1';
+
+            clearFeaturedSliderTimers();
 
             if (!sections.length) { el.innerHTML = ''; el.style.display = 'none'; return; }
             el.style.display = '';
