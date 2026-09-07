@@ -1833,7 +1833,8 @@
             flex-shrink: 0;
         }
         .tt-time-center {
-            flex: 0 0 auto;
+            flex: 0 1 auto;
+            min-width: 0;
             order: 0;
         }
         .tt-theme-toggle {
@@ -1855,6 +1856,20 @@
         }
         .tt-theme-toggle:hover { filter: brightness(1.08); }
         .tt-time-display {
+            /* min-width:0 + overflow/ellipsis lets this pill actually
+               shrink and truncate its own text under real pressure,
+               instead of holding its full natural width and forcing
+               something else (in practice, the always-visible Close
+               button) toward/past the edge of the row on narrower or
+               larger-system-font devices — the "overlaps on some
+               devices, not others" report this is fixing. min-width:0
+               is what makes text-overflow work inside a flex item at
+               all; without it a flex child won't shrink below its
+               content's natural width no matter what flex-shrink says.
+            */
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
             /* Same frosted-glass material as .tt-theme-toggle and the
                lock badges elsewhere in the app — was previously a flat
                red gradient that stayed identical in light and dark mode
@@ -1947,6 +1962,21 @@
         @media (max-width: 380px) {
             .tt-topbar-row2 { gap: 7px; }
             .tt-time-display { padding: 6px 10px; font-size: 12px; }
+        }
+        /* Narrower than the breakpoint above — the width math for row2
+           (lang toggle + search icon + theme icon + timer pill + close
+           button, all in one row) only clears with a few px to spare at
+           normal sizes, so anything smaller, or any device with a
+           larger system font/accessibility text-size setting inflating
+           these same elements, was tight enough to visually crowd or
+           overlap the Close button. Shrinking the icon buttons and
+           tightening gaps further here restores real breathing room
+           instead of a razor-thin fit. */
+        @media (max-width: 360px) {
+            .tt-topbar-row2 { gap: 5px; }
+            .tt-row2-side { gap: 6px; }
+            .tt-theme-toggle, .tt-close-btn { width: 32px; height: 32px; font-size: 13px; }
+            .tt-time-display { padding: 5px 8px; font-size: 11px; max-width: 72px; }
         }
         .tt-timer {
             background: linear-gradient(135deg, rgba(220,38,38,0.18), rgba(220,38,38,0.06));
@@ -2501,7 +2531,13 @@
         ============================================================ */
         .toast-container {
             position: fixed;
-            bottom: 20px;
+            /* Moved from bottom to top — bottom placement sat too close
+               to on-screen keyboards and thumb-zone controls on mobile,
+               and got missed/ignored there. env(safe-area-inset-top)
+               keeps it clear of notches/status bars on devices that
+               have one; the plain 20px is the fallback for devices
+               without safe-area support. */
+            top: calc(20px + env(safe-area-inset-top, 0px));
             left: 50%;
             transform: translateX(-50%);
             z-index: 9999;
@@ -2540,9 +2576,11 @@
             border-color: var(--accent);
         }
         @keyframes toastIn {
+            /* Slides down from above now, matching the container's new
+               top position (previously slid up from below). */
             0% {
                 opacity: 0;
-                transform: translateY(20px) scale(0.95);
+                transform: translateY(-20px) scale(0.95);
             }
             100% {
                 opacity: 1;
@@ -2692,6 +2730,17 @@
             transition: transform 0.2s ease;
         }
         .featured-slide:active { transform: scale(0.98); }
+        /* .featured-slide is deliberately 100%-of-its-own-viewport width
+           (not a fixed px value) so the existing swipe/scroll-snap JS
+           (jumpFeaturedSlider, the scroll-position math) keeps working
+           unchanged — it assumes "one full viewport = one slide." The
+           actual desktop fix is capping the OUTER .featured-slider's
+           width instead, so "100%" resolves to something card-sized
+           again rather than the full 1200px .main-content — this was
+           the huge, mostly-empty box on wider screens. */
+        @media (min-width: 900px) {
+            .featured-slider { max-width: 560px; }
+        }
         .featured-slide-thumb {
             width: 100%;
             aspect-ratio: 16/9;
@@ -6168,9 +6217,17 @@
             const pass = document.getElementById('loginPassword').value.trim();
             if (!email || !pass) { showToast('Enter admin email and password', 'error'); return; }
             showToast('Checking credentials...', 'info');
-            let authResult;
+            // These two checks are independent of each other (one talks
+            // to Apps Script, the other to Firebase Auth) — running them
+            // in parallel rather than one after another was previously
+            // making every admin login take the sum of both round trips
+            // instead of just the slower of the two.
+            let authResult, bridged;
             try {
-                authResult = await apiPost({ action: 'adminLogin', email: email, password: pass });
+                [authResult, bridged] = await Promise.all([
+                    apiPost({ action: 'adminLogin', email: email, password: pass }),
+                    window.bridgeAdminToFirebaseAuth ? window.bridgeAdminToFirebaseAuth(email, pass) : Promise.resolve(false)
+                ]);
             } catch (err) {
                 showToast('Cannot reach server — check your internet connection', 'error');
                 return;
@@ -6179,16 +6236,7 @@
             adminCreds = { email: email, password: pass };
             currentUser = { name: 'Admin', role: 'admin' };
             try { localStorage.setItem('dekaAdminSession', JSON.stringify(adminCreds)); } catch (_) {}
-            // Awaited (unlike the student bridge) — admin writes will
-            // depend on this Firebase Auth session, so we make sure it's
-            // settled before handing over the admin panel. Still never
-            // blocks the login itself: a bridge failure just shows a
-            // warning toast, since the old Apps Script check already
-            // approved these credentials.
-            if (window.bridgeAdminToFirebaseAuth) {
-                const bridged = await window.bridgeAdminToFirebaseAuth(email, pass);
-                if (!bridged) showToast('Signed in, but Firestore sync could not authenticate — some admin actions may not save yet.', 'error');
-            }
+            if (!bridged) showToast('Signed in, but Firestore sync could not authenticate — some admin actions may not save yet.', 'error');
             completeLogin();
         }
 
@@ -6202,14 +6250,18 @@
             try { saved = JSON.parse(localStorage.getItem('dekaAdminSession') || 'null'); } catch (_) { saved = null; }
             if (!saved || !saved.email || !saved.password) return false;
             try {
-                const res = await apiPost({ action: 'adminLogin', email: saved.email, password: saved.password });
+                // Same parallelization as submitAdminLogin above — see
+                // its comment for why these don't need to be sequential.
+                const [res] = await Promise.all([
+                    apiPost({ action: 'adminLogin', email: saved.email, password: saved.password }),
+                    window.bridgeAdminToFirebaseAuth ? window.bridgeAdminToFirebaseAuth(saved.email, saved.password) : Promise.resolve(false)
+                ]);
                 if (!res.success) {
                     localStorage.removeItem('dekaAdminSession');
                     return false;
                 }
                 adminCreds = saved;
                 currentUser = { name: 'Admin', role: 'admin' };
-                if (window.bridgeAdminToFirebaseAuth) await window.bridgeAdminToFirebaseAuth(saved.email, saved.password);
                 completeLogin();
                 return true;
             } catch (_) {
@@ -7549,6 +7601,16 @@
         }
 
         function showToast(msg, type = 'info') {
+            // Reserved for admin from here on — students found these
+            // intrusive during actual use of the app (e.g. mid-test).
+            // The login screen is exempt on purpose: while currentUser
+            // is still null we don't yet know if it's a student or
+            // admin signing in, and losing feedback there (wrong
+            // password, no internet) would leave anyone stuck with no
+            // explanation at all — that's not what was being asked for,
+            // just the repeated "Saved"/sync-status noise during normal
+            // use.
+            if (currentUser && currentUser.role !== 'admin') return;
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
@@ -7557,7 +7619,7 @@
             container.appendChild(toast);
             setTimeout(() => {
                 toast.style.opacity = '0';
-                toast.style.transform = 'translateY(10px) scale(0.95)';
+                toast.style.transform = 'translateY(-10px) scale(0.95)'; // exits upward now, matching the top-anchored container
                 setTimeout(() => toast.remove(), 300);
             }, 3500);
         }
