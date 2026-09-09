@@ -6358,7 +6358,7 @@
             }
             if (!res.success) { showToast(res.error || 'Invalid login', 'error'); return; }
             studentCreds = { identifier: identifier, password: password };
-            currentUser = { name: res.name, role: 'student' };
+            currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess };
             try {
                 localStorage.setItem('dekaStudentSession', JSON.stringify(studentCreds));
             } catch (_) {}
@@ -6385,7 +6385,7 @@
                     return false;
                 }
                 studentCreds = saved;
-                currentUser = { name: res.name, role: 'student' };
+                currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess };
                 if (window.bridgeStudentToFirebaseAuth) window.bridgeStudentToFirebaseAuth(res.email, saved.password);
                 completeLogin();
                 return true;
@@ -6689,7 +6689,7 @@
                 const unlocked = isUnlockedForMe('test', t);
                 return `
                     <div class="test-card">
-                        <div class="test-title">${escapeHtml(t.title)} ${t.locked ? `<span class="badge-locked"><i class="fas fa-lock"></i> ₹${t.price || 0}</span>` : ''}</div>
+                        <div class="test-title">${escapeHtml(t.title)} ${lockBadgeHtml(t)}</div>
                         <div class="test-meta">
                             <span><i class="fas fa-book"></i> ${escapeHtml(t.subject || 'General')}</span>
                             <span><i class="fas fa-list"></i> ${(t.questions || []).length} Qs</span>
@@ -6717,7 +6717,7 @@
                 const unlocked = isUnlockedForMe('material', m);
                 return `
                     <div class="test-card">
-                        <div class="test-title">${escapeHtml(m.title)} ${m.locked ? `<span class="badge-locked"><i class="fas fa-lock"></i> ₹${m.price || 0}</span>` : ''}</div>
+                        <div class="test-title">${escapeHtml(m.title)} ${lockBadgeHtml(m)}</div>
                         <div class="test-meta">
                             <span><i class="fas fa-book"></i> ${escapeHtml(m.subject || 'General')}</span>
                         </div>
@@ -6743,7 +6743,7 @@
                 const unlocked = isUnlockedForMe('video', v);
                 return `
                     <div class="test-card">
-                        <div class="test-title">${escapeHtml(v.title)} ${v.locked ? `<span class="badge-locked"><i class="fas fa-lock"></i> ₹${v.price || 0}</span>` : ''}</div>
+                        <div class="test-title">${escapeHtml(v.title)} ${lockBadgeHtml(v)}</div>
                         <div class="card-actions">
                             <button class="btn btn-primary btn-sm" onclick="closeMyAccount(); setTimeout(() => playVideo('${v.id}'), 350);"><i class="fas fa-${unlocked ? 'play' : 'lock'}"></i> ${unlocked ? 'Watch' : 'Unlock'}</button>
                         </div>
@@ -8090,7 +8090,7 @@
                 return `
                     <div class="material-card">
                         ${materialCardMediaHtml(m)}
-                        <div class="material-title">${escapeHtml(m.title)} ${isDraft ? '<span class="badge-draft"><i class="fas fa-eye-slash"></i> Draft</span>' : ''} ${m.locked ? `<span class="badge-locked"><i class="fas fa-lock"></i> ₹${m.price || 0}</span>` : ''}</div>
+                        <div class="material-title">${escapeHtml(m.title)} ${isDraft ? '<span class="badge-draft"><i class="fas fa-eye-slash"></i> Draft</span>' : ''} ${lockBadgeHtml(m)}</div>
                         <div class="material-meta">
                             <span><i class="fas fa-book"></i> ${escapeHtml(m.subject || 'General')}</span>
                             <span><i class="fas fa-folder"></i> ${escapeHtml(folderName)}</span>
@@ -8283,7 +8283,7 @@
                 const unlocked = isUnlockedForMe('test', t);
                 return `
                     <div class="test-card">
-                        <div class="test-title">${escapeHtml(t.title)} ${isBilingual ? '<span class="badge-bilingual"><i class="fas fa-language"></i> Bilingual</span>' : ''} ${isDraft ? '<span class="badge-draft"><i class="fas fa-eye-slash"></i> Draft</span>' : ''} ${t.locked ? `<span class="badge-locked"><i class="fas fa-lock"></i> ₹${t.price || 0}</span>` : ''}</div>
+                        <div class="test-title">${escapeHtml(t.title)} ${isBilingual ? '<span class="badge-bilingual"><i class="fas fa-language"></i> Bilingual</span>' : ''} ${isDraft ? '<span class="badge-draft"><i class="fas fa-eye-slash"></i> Draft</span>' : ''} ${lockBadgeHtml(t)}</div>
                         <div class="test-meta">
                             <span><i class="fas fa-book"></i> ${escapeHtml(t.subject || 'General')}</span>
                             <span><i class="fas fa-clock"></i> ${t.duration || 30} min</span>
@@ -10307,7 +10307,11 @@
                                         ? `<img src="${escapeHtml(driveThumbSrc(it.thumbnailFileId))}" class="featured-slide-thumb" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className:'featured-slide-thumb-fallback', innerHTML:'<i class=&quot;fas ${s.icon}&quot;></i>'}))" />`
                                         : `<div class="featured-slide-thumb-fallback"><i class="fas ${s.icon}"></i></div>`
                                     }
-                                    ${it.locked ? `<div class="featured-slide-lock"><i class="fas fa-lock"></i> ₹${it.price || 0}</div>` : `<div class="featured-slide-free"><i class="fas fa-gift"></i> FREE</div>`}
+                                    ${it.locked
+                                        ? (currentUser?.role === 'student' && currentUser.freeAccess
+                                            ? `<div class="featured-slide-free" style="background:#16a34a;"><i class="fas fa-gift"></i> Free for you</div>`
+                                            : `<div class="featured-slide-lock"><i class="fas fa-lock"></i> ₹${it.price || 0}</div>`)
+                                        : `<div class="featured-slide-free"><i class="fas fa-gift"></i> FREE</div>`}
                                 </div>
                                 <div class="featured-slide-body">
                                     <div class="featured-slide-title">${escapeHtml(it.title)}</div>
@@ -13915,11 +13919,31 @@
         // course payment covers everything attached to it).
         function isUnlockedForMe(itemType, item) {
             if (!item.locked) return true;
+            // Admin's "Make all free" toggle for a student (freeAccess) —
+            // checked here so every button/state that depends on this
+            // function (Start Mock, course Unlock buttons, etc.) reflects
+            // it immediately, not just the server-side checkAccess call
+            // that already granted it silently once clicked.
+            if (currentUser?.role === 'student' && currentUser.freeAccess) return true;
             if (myUnlockedSet.has(itemType + ':' + item.id)) return true;
             if (itemType !== 'course' && item.courseIds && item.courseIds.length) {
                 return item.courseIds.some(cid => myUnlockedSet.has('course:' + cid));
             }
             return false;
+        }
+
+        // Single source of truth for a locked item's price/lock badge —
+        // a free-access student sees "Free for you" here instead of
+        // every card template needing its own separate check. Paired
+        // with the freeAccess check inside isUnlockedForMe just above,
+        // which is what makes the actual buttons (Start Mock, Unlock,
+        // etc.) behave correctly too, not just this badge.
+        function lockBadgeHtml(item) {
+            if (!item.locked) return '';
+            if (currentUser?.role === 'student' && currentUser.freeAccess) {
+                return `<span class="badge-locked" style="background:#16a34a;"><i class="fas fa-gift"></i> Free for you</span>`;
+            }
+            return `<span class="badge-locked"><i class="fas fa-lock"></i> ₹${item.price || 0}</span>`;
         }
 
         // My Purchases — lets a signed-in student see what they've bought.
