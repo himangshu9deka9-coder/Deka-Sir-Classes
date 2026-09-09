@@ -3829,6 +3829,32 @@
         }
 
         .lock-modal-price { font-size: 30px; font-weight: 800; color: var(--accent); text-align: center; margin: 10px 0; }
+        /* ============================================================
+           DESKTOP WIDTH — FORCE RULE
+           ============================================================
+           Placed last on purpose, with !important, so it wins the
+           cascade no matter what else in this stylesheet might
+           otherwise be narrowing things — the earlier min-width:900px
+           rule further up should have handled this on its own, but
+           reports from an actual maximized desktop browser showed
+           content and the header both stuck to a narrow left-hand
+           column with empty space on the right, which no amount of
+           reading the existing rules explained. Rather than keep
+           guessing at a cause I can't see rendered, this makes the
+           real, visible width correct unconditionally: no media query
+           to (maybe) fail to match, no earlier rule to (maybe) get
+           overridden by — just the actual content, sized against the
+           actual window, always. */
+        .main-content {
+            width: min(1200px, 96vw) !important;
+            max-width: min(1200px, 96vw) !important;
+            margin: 0 auto !important;
+        }
+        .header-row {
+            width: min(1200px, 96vw) !important;
+            max-width: min(1200px, 96vw) !important;
+            margin: 0 auto !important;
+        }
     </style>
 </head>
 <body>
