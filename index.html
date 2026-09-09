@@ -174,48 +174,52 @@
             }
         };
 
-        // Loads one test's actual question content — a single batched
-        // read of two subcollections instead of an Apps Script exec
-        // round-trip. This is what a 500+ question mock was waiting on
-        // to open at anything close to a reasonable speed: Apps Script's
-        // fixed per-call overhead (cold start, sheet scan, JSON
-        // serialization) dominates for a payload this size in a way
-        // Firestore's direct document reads don't.
-        //
-        // Merges the public "questions" subcollection with the
-        // "answerKey" one into the exact same shape
-        // ensureTestQuestionsLoaded already expects (each question
-        // object carrying its own correctAnswer) — this is NOT a new
-        // security exposure: the existing Apps Script path already
-        // sends correctAnswer to the client at load time today (see
-        // where score gets computed client-side in startTestInner/
-        // submitCurrentTest), so this just delivers the same data
-        // faster, not more of it. Returns null on any failure — empty
-        // subcollections, a permission error, network trouble — so the
-        // caller falls back to Apps Script exactly like every other
-        // Firestore read in this app does.
+        // Loads one test's question CONTENT only — not the answer key.
+        // Splitting this from the answer key (previously fetched
+        // together) roughly halves what has to download before a
+        // student can actually start a large test: answerKey docs are
+        // tiny ({correctAnswer: 0}), but questions carry the full
+        // bilingual text/options/hints, which is the expensive part.
+        // The correct answers aren't actually needed until submitTest
+        // grades the attempt — see ensureAnswerKeyLoaded below — so
+        // there's no reason to make someone wait for both before they
+        // can even see question 1.
         window.fetchFirestoreQuestions = async function (testId) {
             try {
-                const [qSnap, aSnap] = await Promise.all([
-                    getDocs(collection(window.db, 'tests', testId, 'questions')),
-                    getDocs(collection(window.db, 'tests', testId, 'answerKey'))
-                ]);
+                const qSnap = await getDocs(collection(window.db, 'tests', testId, 'questions'));
                 if (qSnap.empty) return null; // not synced to Firestore yet — let the caller fall back
-                const answerById = new Map();
-                aSnap.forEach(d => answerById.set(d.id, d.data().correctAnswer));
-                const questions = qSnap.docs.map(d => {
-                    const data = d.data();
-                    return { ...data, correctAnswer: answerById.has(d.id) ? answerById.get(d.id) : 0 };
-                });
+                const questions = qSnap.docs.map(d => d.data());
                 // "order" only exists to sort correctly here (qN document
                 // IDs aren't guaranteed to come back from Firestore in
                 // numeric order) — stripped afterward so the result
-                // matches Apps Script's shape exactly.
+                // matches Apps Script's shape exactly, aside from
+                // correctAnswer being filled in later (see
+                // ensureAnswerKeyLoaded).
                 questions.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
                 questions.forEach(q => { delete q.order; });
                 return questions;
             } catch (err) {
                 console.warn('[Firestore] question read failed for test ' + testId + ', falling back to Apps Script:', err);
+                return null;
+            }
+        };
+
+        // The other half of the split above — fetches just the small
+        // answerKey subcollection and returns correctAnswer values
+        // indexed by position, so ensureAnswerKeyLoaded can merge them
+        // into already-loaded question objects right before grading.
+        window.fetchFirestoreAnswerKey = async function (testId) {
+            try {
+                const aSnap = await getDocs(collection(window.db, 'tests', testId, 'answerKey'));
+                if (aSnap.empty) return null;
+                const byIndex = {};
+                aSnap.forEach(d => {
+                    const idx = parseInt(d.id.replace('q', ''), 10);
+                    if (!isNaN(idx)) byIndex[idx] = d.data().correctAnswer;
+                });
+                return byIndex;
+            } catch (err) {
+                console.warn('[Firestore] answer key read failed for test ' + testId + ':', err);
                 return null;
             }
         };
@@ -2621,6 +2625,44 @@
         .toast.info {
             border-color: var(--accent);
         }
+
+        /* Full-screen loader — reserved for genuinely blocking waits
+           (right now: opening a large mock's questions) where there's
+           no specific button to show a spinner on, and where doing
+           nothing visible risks feeling like the tap didn't register
+           at all rather than "this is loading." Deliberately NOT a
+           toast — it needs to actually block interaction for the
+           second or two it's up, not float past and disappear on its
+           own timer. */
+        .full-screen-loader {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(3px);
+            -webkit-backdrop-filter: blur(3px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+        }
+        .full-screen-loader-spinner {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 4px solid rgba(255, 255, 255, 0.25);
+            border-top-color: #fff;
+            animation: fullScreenLoaderSpin 0.8s linear infinite;
+        }
+        @keyframes fullScreenLoaderSpin {
+            to { transform: rotate(360deg); }
+        }
+        .full-screen-loader-msg {
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+        }
         @keyframes toastIn {
             /* Slides down from above now, matching the container's new
                top position (previously slid up from below). */
@@ -4451,6 +4493,10 @@
 
     <!-- ===== TOAST ===== -->
     <div class="toast-container" id="toastContainer"></div>
+    <div id="fullScreenLoader" class="full-screen-loader" style="display:none;">
+        <div class="full-screen-loader-spinner"></div>
+        <div class="full-screen-loader-msg" id="fullScreenLoaderMsg"></div>
+    </div>
 
     <!-- ===== FULL-SCREEN MOCK TEST TAKING VIEW ===== -->
     <div id="testTakeOverlay" class="test-take-overlay">
@@ -7672,17 +7718,28 @@
             openWhatsAppDirect(lines.join('\n'));
         }
 
+        function showFullScreenLoader(msg) {
+            const el = document.getElementById('fullScreenLoader');
+            if (!el) return;
+            document.getElementById('fullScreenLoaderMsg').textContent = msg || 'Loading...';
+            el.style.display = 'flex';
+        }
+        function hideFullScreenLoader() {
+            const el = document.getElementById('fullScreenLoader');
+            if (el) el.style.display = 'none';
+        }
+
         function showToast(msg, type = 'info') {
-            // Reserved for admin from here on — students found these
-            // intrusive during actual use of the app (e.g. mid-test).
-            // The login screen is exempt on purpose: while currentUser
-            // is still null we don't yet know if it's a student or
-            // admin signing in, and losing feedback there (wrong
-            // password, no internet) would leave anyone stuck with no
-            // explanation at all — that's not what was being asked for,
-            // just the repeated "Saved"/sync-status noise during normal
-            // use.
-            if (currentUser && currentUser.role !== 'admin') return;
+            // Success/info toasts are admin-only from here on — students
+            // found these intrusive during actual use of the app (e.g.
+            // mid-test, the repeated "Saved"/sync-status noise). Error
+            // toasts stay visible for everyone, though: those are the
+            // ones telling a student their submission failed, their
+            // password was wrong, their connection dropped mid-test,
+            // etc. — silently swallowing those would leave someone
+            // stuck with no explanation, which isn't what was being
+            // asked for, just the noise.
+            if (currentUser && currentUser.role !== 'admin' && type !== 'error') return;
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
@@ -11994,7 +12051,18 @@
                     showToast('This mock test is not published yet', 'error');
                     return;
                 }
-                const loaded = await ensureTestQuestionsLoaded(test);
+                const loaded = await (async () => {
+                    // A large mock's first load can take a couple of
+                    // seconds even from Firestore — showing nothing
+                    // during that made the tap feel like it hadn't
+                    // registered at all rather than "this is loading."
+                    showFullScreenLoader('Loading questions...');
+                    try {
+                        return await ensureTestQuestionsLoaded(test);
+                    } finally {
+                        hideFullScreenLoader();
+                    }
+                })();
                 if (!loaded) return; // ensureTestQuestionsLoaded already showed the real reason (network/timeout)
                 if (!test.questions || !test.questions.length) {
                     showToast('This test has no questions yet', 'error');
@@ -12452,8 +12520,60 @@
             }, 1000);
         }
 
-        function submitTest() {
+        // The correct-answers half of a test's content — deliberately
+        // NOT fetched at test-open time (see fetchFirestoreQuestions'
+        // own comment on why). Called once, right before grading in
+        // submitTest, so the unavoidable network wait for this lands at
+        // a natural pause point (right after tapping Submit) instead of
+        // adding to the wait before a student can even see question 1.
+        async function ensureAnswerKeyLoaded(test) {
+            // Apps Script's getTestQuestions bundles correctAnswer with
+            // each question already (see that action in Code.gs) — if
+            // that's how these got loaded, there's nothing left to do.
+            if (test.questions.length && test.questions[0].correctAnswer !== undefined) return true;
+            if (window.fetchFirestoreAnswerKey) {
+                const byIndex = await window.fetchFirestoreAnswerKey(test.id);
+                if (byIndex) {
+                    test.questions.forEach((q, i) => { q.correctAnswer = byIndex[i] ?? 0; });
+                    return true;
+                }
+            }
+            // Firestore didn't have it yet — fall back to Apps Script's
+            // full question payload, which includes answers. Slower,
+            // but correct; only hit for a test that was never synced to
+            // Firestore's split questions/answerKey shape.
+            try {
+                const result = await apiGet('action=getTestQuestions&testId=' + encodeURIComponent(test.id), 45000);
+                if (result && result.success && Array.isArray(result.questions)) {
+                    test.questions.forEach((q, i) => {
+                        if (q.correctAnswer === undefined) q.correctAnswer = result.questions[i]?.correctAnswer ?? 0;
+                    });
+                    return true;
+                }
+            } catch (err) {
+                console.warn('Failed to load answer key for test', test.id, err);
+            }
+            return false;
+        }
+
+        async function submitTest() {
             if (testTimer) clearInterval(testTimer);
+            // Toasts are admin-only now (students found them intrusive
+            // mid-test — see showToast's own comment), so feedback for
+            // this brief wait goes on the button itself instead of a
+            // popup that would just be silently swallowed anyway.
+            const submitBtn = document.querySelector('.tt-submit-bottom-btn');
+            const originalBtnHtml = submitBtn ? submitBtn.innerHTML : null;
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Grading...';
+            }
+            const keyLoaded = await ensureAnswerKeyLoaded(activeTest);
+            if (!keyLoaded) {
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = originalBtnHtml; }
+                showToast('Could not verify answers — check your connection and try again', 'error');
+                return;
+            }
             const qs = activeTest.questions;
             let correct = 0,
                 attempted = 0;
