@@ -174,6 +174,52 @@
             }
         };
 
+        // Loads one test's actual question content — a single batched
+        // read of two subcollections instead of an Apps Script exec
+        // round-trip. This is what a 500+ question mock was waiting on
+        // to open at anything close to a reasonable speed: Apps Script's
+        // fixed per-call overhead (cold start, sheet scan, JSON
+        // serialization) dominates for a payload this size in a way
+        // Firestore's direct document reads don't.
+        //
+        // Merges the public "questions" subcollection with the
+        // "answerKey" one into the exact same shape
+        // ensureTestQuestionsLoaded already expects (each question
+        // object carrying its own correctAnswer) — this is NOT a new
+        // security exposure: the existing Apps Script path already
+        // sends correctAnswer to the client at load time today (see
+        // where score gets computed client-side in startTestInner/
+        // submitCurrentTest), so this just delivers the same data
+        // faster, not more of it. Returns null on any failure — empty
+        // subcollections, a permission error, network trouble — so the
+        // caller falls back to Apps Script exactly like every other
+        // Firestore read in this app does.
+        window.fetchFirestoreQuestions = async function (testId) {
+            try {
+                const [qSnap, aSnap] = await Promise.all([
+                    getDocs(collection(window.db, 'tests', testId, 'questions')),
+                    getDocs(collection(window.db, 'tests', testId, 'answerKey'))
+                ]);
+                if (qSnap.empty) return null; // not synced to Firestore yet — let the caller fall back
+                const answerById = new Map();
+                aSnap.forEach(d => answerById.set(d.id, d.data().correctAnswer));
+                const questions = qSnap.docs.map(d => {
+                    const data = d.data();
+                    return { ...data, correctAnswer: answerById.has(d.id) ? answerById.get(d.id) : 0 };
+                });
+                // "order" only exists to sort correctly here (qN document
+                // IDs aren't guaranteed to come back from Firestore in
+                // numeric order) — stripped afterward so the result
+                // matches Apps Script's shape exactly.
+                questions.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+                questions.forEach(q => { delete q.order; });
+                return questions;
+            } catch (err) {
+                console.warn('[Firestore] question read failed for test ' + testId + ', falling back to Apps Script:', err);
+                return null;
+            }
+        };
+
         // ============================================================
         // STAGE 6 — mirror every successful admin save into Firestore,
         // right after Apps Script's own "syncStore" write already
@@ -11869,6 +11915,19 @@
             // column was introduced — treat that as "unknown" and fetch
             // anyway rather than wrongly treating it as empty.
             if (test.questionCount === 0) return true;
+
+            // Try Firestore first — same data, same trust model as the
+            // Apps Script fallback below (see fetchFirestoreQuestions'
+            // own comment), just far faster for a large test. Falls
+            // through silently to Apps Script if this test hasn't been
+            // synced to Firestore yet, or the read fails for any reason.
+            if (window.fetchFirestoreQuestions) {
+                const fsQuestions = await window.fetchFirestoreQuestions(test.id);
+                if (fsQuestions && fsQuestions.length) {
+                    test.questions = fsQuestions;
+                    return true;
+                }
+            }
             try {
                 // 45s, not 30s — a large test (100+ questions) can
                 // legitimately take longer to read, especially the first
