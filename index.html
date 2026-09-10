@@ -12040,6 +12040,14 @@
         }
 
         async function startTestInner(testId) {
+            // Shown for the whole setup process now, not just the
+            // network fetch — see the finally block below for why: this
+            // is what stops the fullscreen-entry transition, any retake/
+            // resume confirm() dialogs, and the question card's own
+            // fade-in from all becoming visible at slightly different
+            // moments and compounding into a visible stutter on slower
+            // devices ("glitch" when opening a mock).
+            showFullScreenLoader('Loading questions...');
             try {
                 document.getElementById('mockSearchBar').style.display = 'none';
                 document.getElementById('mockSearchInput').value = '';
@@ -12051,18 +12059,7 @@
                     showToast('This mock test is not published yet', 'error');
                     return;
                 }
-                const loaded = await (async () => {
-                    // A large mock's first load can take a couple of
-                    // seconds even from Firestore — showing nothing
-                    // during that made the tap feel like it hadn't
-                    // registered at all rather than "this is loading."
-                    showFullScreenLoader('Loading questions...');
-                    try {
-                        return await ensureTestQuestionsLoaded(test);
-                    } finally {
-                        hideFullScreenLoader();
-                    }
-                })();
+                const loaded = await ensureTestQuestionsLoaded(test);
                 if (!loaded) return; // ensureTestQuestionsLoaded already showed the real reason (network/timeout)
                 if (!test.questions || !test.questions.length) {
                     showToast('This test has no questions yet', 'error');
@@ -12152,6 +12149,17 @@
             } catch (e) {
                 console.error('startTest error:', e);
                 showToast('Error starting test: ' + e.message, 'error');
+            } finally {
+                // Double requestAnimationFrame = wait for the browser to
+                // actually paint the frame after renderQuestion() ran
+                // (one rAF just queues before next paint; the second one
+                // confirms that paint already happened) before removing
+                // the loader. Revealing only once everything — fullscreen
+                // transition, confirm() dialogs, the fade-in — has
+                // genuinely settled is what turns "loader vanishes, THEN
+                // content pops/fades in" into one clean reveal instead of
+                // two visibly separate steps.
+                requestAnimationFrame(() => requestAnimationFrame(() => hideFullScreenLoader()));
             }
         }
 
