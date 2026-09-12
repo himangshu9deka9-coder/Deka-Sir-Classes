@@ -6105,6 +6105,54 @@
         // to an empty/broken account, which is what made the site look
         // dead to first-time Google visitors.
         let hasSyncedOnce = false;
+        // True once a Firestore-only pre-render has applied (see
+        // fastFirstPaint below) — separate from hasSyncedOnce because it
+        // covers less: tests/materials/folders/videos/courses only, never
+        // results/students (Firestore's security rules don't allow a
+        // guest to read those — see firestore.rules — so those two stats
+        // and anything results-dependent still wait for the real,
+        // Apps-Script-inclusive sync). Checked alongside hasSyncedOnce
+        // everywhere content that Firestore alone CAN supply decides
+        // whether to show a skeleton/placeholder or the real thing.
+        let hasFastPaintedOnce = false;
+
+        // On a brand-new visitor with nothing cached yet, syncFromServer's
+        // full sync waits on Promise.all([apiGet(...), fetchFirestoreContent()])
+        // — meaning even though Firestore usually answers quickly, the
+        // WHOLE first render still waits for Apps Script too (needed for
+        // results/students stats, and as this cycle's fallback). Apps
+        // Script's own cold-start/exec overhead can easily be the slower
+        // of the two, and a slow mobile connection makes it worse — the
+        // result was several seconds of blank placeholders before ANYTHING
+        // appeared, even data Firestore already had ready and waiting.
+        //
+        // This fetches Firestore alone and renders with just that,
+        // typically much faster. The real sync (started right alongside
+        // this one — see startPolling below) still runs and will
+        // overwrite/complete this moments later with the full picture,
+        // including results/students. Guarded by hasSyncedOnce so that if
+        // the real sync happens to win the race, this doesn't clobber more
+        // complete data with less complete data.
+        async function fastFirstPaint() {
+            if (hasSyncedOnce || hasFastPaintedOnce) return;
+            if (!window.fetchFirestoreContent) return;
+            try {
+                const firestoreContent = await window.fetchFirestoreContent();
+                if (!firestoreContent || hasSyncedOnce) return;
+                const store = getStore();
+                const normalized = normalizeFolderRefs(firestoreContent.tests, firestoreContent.materials, firestoreContent.folders, firestoreContent.videos);
+                store.tests = normalized.tests;
+                store.materials = normalized.materials;
+                store.videos = normalized.videos;
+                store.courses = firestoreContent.courses || [];
+                store.folders = normalized.folders.length ? normalized.folders : store.folders;
+                memoryStore = store;
+                hasFastPaintedOnce = true;
+                if (typeof renderAll === 'function') renderAll();
+            } catch (err) {
+                console.warn('Fast first paint failed (non-fatal — the full sync will still follow):', err);
+            }
+        }
         function renderFolderGridSkeleton(container, count) {
             count = count || 4;
             container.innerHTML = Array.from({ length: count }).map(() => '<div class="skeleton-card"></div>').join('');
@@ -8084,7 +8132,7 @@
             breadcrumb.innerHTML = bcHtml;
 
             if (folders.length === 0) {
-                if (!hasSyncedOnce) {
+                if (!hasSyncedOnce && !hasFastPaintedOnce) {
                     renderFolderGridSkeleton(container);
                 } else {
                     container.innerHTML = '';
@@ -8204,7 +8252,7 @@
             breadcrumb.innerHTML = bcHtml;
 
             if (folders.length === 0) {
-                if (!hasSyncedOnce) {
+                if (!hasSyncedOnce && !hasFastPaintedOnce) {
                     renderFolderGridSkeleton(container);
                 } else {
                     container.innerHTML = '';
@@ -10271,12 +10319,17 @@
                 // brand-new visitor's dashboard look like an empty/dead
                 // site instead of "still loading". A dash reads as
                 // "loading" instead of "there's nothing here".
-                const placeholder = hasSyncedOnce ? null : '–';
+                // Materials/Tests can come from the fast Firestore-only
+                // paint above; Students/Attempts are results-derived and
+                // Firestore's rules don't let a guest read that collection
+                // at all, so those two genuinely need the full sync.
+                const materialsTestsReady = hasSyncedOnce || hasFastPaintedOnce;
+                const placeholder = materialsTestsReady ? null : '–';
                 document.getElementById('statMaterials').textContent = placeholder ?? (store.materials || []).length;
                 document.getElementById('statTests').textContent = placeholder ?? (store.tests || []).length;
                 const studentNames = new Set((store.results || []).map(r => r.studentName).filter(Boolean));
-                document.getElementById('statStudents').textContent = placeholder ?? (studentNames.size || 0);
-                document.getElementById('statAttempts').textContent = placeholder ?? (store.results || []).length;
+                document.getElementById('statStudents').textContent = hasSyncedOnce ? (studentNames.size || 0) : '–';
+                document.getElementById('statAttempts').textContent = hasSyncedOnce ? (store.results || []).length : '–';
             } catch (err) {
                 console.error('Dashboard stats failed to render:', err);
             }
@@ -13199,6 +13252,7 @@
 
         function startPolling() {
             if (pollTimer) return; // already running
+            fastFirstPaint(); // fires in parallel with the line below — see its own comment for why
             syncFromServer(true);
             pollTimer = setInterval(() => syncFromServer(true), POLL_INTERVAL_MS);
         }
@@ -13294,7 +13348,7 @@
             breadcrumb.innerHTML = bcHtml;
 
             if (folders.length === 0) {
-                if (!hasSyncedOnce) {
+                if (!hasSyncedOnce && !hasFastPaintedOnce) {
                     renderFolderGridSkeleton(container);
                 } else {
                     container.innerHTML = '';
