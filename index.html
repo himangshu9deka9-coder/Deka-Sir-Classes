@@ -46,14 +46,39 @@
             measurementId: "G-6JWW3GZ75L"
         };
 
-        const firebaseApp = initializeApp(firebaseConfig);
-        // Explicitly named 'default' database — a REST 404 during the
-        // Firestore migration revealed this project's database is
-        // literally named "default" (from the Database ID field during
-        // setup), not the SDK's automatic canonical default.
-        window.db = getFirestore(firebaseApp, 'default');
-        window.auth = getAuth(firebaseApp);
-        window.firebaseSignOut = () => signOut(window.auth);
+        // Wrapped in try/catch on purpose: Safari's private-browsing mode
+        // is known to throw when Firebase Auth's SDK tries to set up its
+        // IndexedDB-based session persistence — sometimes without the SDK
+        // catching it internally. Since this whole block is a <script
+        // type="module">, an uncaught throw here doesn't just skip
+        // Firebase — it halts the ENTIRE module immediately, silently
+        // preventing every function below (bridgeStudentToFirebaseAuth,
+        // fetchFirestoreContent, syncContentToFirestore, all of it) from
+        // ever being defined at all. That's what turned into "the page
+        // just sits blank, have to force-close and reopen" on iPhone: not
+        // a slow load, a script that died before it could finish setting
+        // up the page. window.db/window.auth are explicitly set to null
+        // on failure (not left undefined) so every "if (window.db)" check
+        // already scattered through this file's Firestore-dependent code
+        // correctly treats this session as Firestore-unavailable and
+        // falls back to Apps Script, instead of throwing on a property
+        // read against undefined the next time something tries to use it.
+        let firebaseApp = null;
+        try {
+            firebaseApp = initializeApp(firebaseConfig);
+            // Explicitly named 'default' database — a REST 404 during the
+            // Firestore migration revealed this project's database is
+            // literally named "default" (from the Database ID field during
+            // setup), not the SDK's automatic canonical default.
+            window.db = getFirestore(firebaseApp, 'default');
+            window.auth = getAuth(firebaseApp);
+            window.firebaseSignOut = () => signOut(window.auth);
+        } catch (err) {
+            console.warn('[Firebase] initialization failed this session (private browsing and some ad/tracker blockers are known causes) — falling back to Apps Script only:', err);
+            window.db = null;
+            window.auth = null;
+            window.firebaseSignOut = () => Promise.resolve();
+        }
 
         // Bridge login — see the comment at every call site in
         // submitStudentLogin/tryAutoLoginStudent for the full picture.
