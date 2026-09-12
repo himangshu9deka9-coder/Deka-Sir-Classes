@@ -8960,6 +8960,9 @@
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
             await ensureTestQuestionsLoaded(test);
+            // This export includes correctAnswer per question — same
+            // requirement, same fix as Q&A mode and the PDF export above.
+            await ensureAnswerKeyLoaded(test);
 
             const exportData = (test.questions || []).map(q => ({
                 question_en: q.question_en || '',
@@ -8993,6 +8996,10 @@
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
             await ensureTestQuestionsLoaded(test);
+            // The PDF's Answer Key section needs real correctAnswer values
+            // — same requirement as Q&A mode, same reason this call is
+            // needed here (see ensureAnswerKeyLoaded's own comment).
+            await ensureAnswerKeyLoaded(test);
             const isBilingual = (test.questions || []).some(q => q.question_as && q.question_as !== q.question_en);
 
             const modalHtml = `
@@ -9015,6 +9022,7 @@
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
             await ensureTestQuestionsLoaded(test);
+            await ensureAnswerKeyLoaded(test); // no-op if openExportPdfModal already loaded it; defensive if ever called on its own
             showToast('Building PDF... this can take a moment if there are images', 'info');
             const jsPdfReady = await ensureJsPdfLoaded();
             if (!jsPdfReady) {
@@ -9490,7 +9498,27 @@
             const store = getStore();
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
-            await ensureTestQuestionsLoaded(test);
+            showFullScreenLoader('Loading questions...');
+            let keyLoaded;
+            try {
+                await ensureTestQuestionsLoaded(test);
+                // CRITICAL: without this, every question's correctAnswer
+                // dropdown below defaults to "Option A" (index 0) since
+                // ensureTestQuestionsLoaded alone no longer includes real
+                // answers (see its own comment on why that's deferred).
+                // Saving this form after that would silently overwrite
+                // every question's actual correct answer with the wrong
+                // one — this is a genuine data-corruption risk, not just
+                // a display bug like the other spots this same pattern
+                // got missed.
+                keyLoaded = await ensureAnswerKeyLoaded(test);
+            } finally {
+                hideFullScreenLoader();
+            }
+            if (!keyLoaded) {
+                showToast('Could not load current answers — check your connection and try again before editing', 'error');
+                return;
+            }
 
             // If this test belongs to a course, only that course's own
             // folders should be selectable here — never the main library's
@@ -11186,8 +11214,15 @@
             // (see ensureTestQuestionsLoaded's comment) — cloning a test
             // straight from `original` without this would bake in an
             // empty questions array forever, since the JSON.parse/
-            // stringify below takes a frozen copy right now.
-            if (moduleType === 'test') await ensureTestQuestionsLoaded(original);
+            // stringify below takes a frozen copy right now. Also needs
+            // real correctAnswer values (not just question text/options)
+            // before that snapshot is taken — otherwise the clone would
+            // permanently have no correct answers at all, since nothing
+            // ever revisits a cloned test's questions afterward to fix it.
+            if (moduleType === 'test') {
+                await ensureTestQuestionsLoaded(original);
+                await ensureAnswerKeyLoaded(original);
+            }
             const clone = JSON.parse(JSON.stringify(original));
             clone.id = generateId();
             clone.clonedFromId = original.id;
@@ -14391,8 +14426,25 @@
 
         async function openTestQnaInner(test) {
             if (test.questionCount === 0) { showToast('This test has no questions yet', 'error'); return; }
-            const loaded = await ensureTestQuestionsLoaded(test);
+            showFullScreenLoader('Loading questions...');
+            let loaded, keyLoaded;
+            try {
+                loaded = await ensureTestQuestionsLoaded(test);
+                // Q&A mode shows correct answers immediately (that's its
+                // whole purpose — study mode, not a timed exam), unlike
+                // normal test-taking which now deliberately defers this
+                // fetch to submitTest for speed (see ensureAnswerKeyLoaded's
+                // own comment). Skipping this call here was the actual
+                // bug behind "answer not showing" — every question's
+                // correctAnswer was undefined, so "Show only the answer"
+                // matched nothing (blank) and the correct-answer highlight
+                // in "Show all options" mode never applied either.
+                keyLoaded = loaded ? await ensureAnswerKeyLoaded(test) : false;
+            } finally {
+                hideFullScreenLoader();
+            }
             if (!loaded) return; // ensureTestQuestionsLoaded already showed the real reason (network/timeout)
+            if (!keyLoaded) { showToast('Could not load answers — check your connection and try again', 'error'); return; }
             if (!test.questions || !test.questions.length) { showToast('This test has no questions yet', 'error'); return; }
             qnaMode = 'test';
             activeTestQna = test;
