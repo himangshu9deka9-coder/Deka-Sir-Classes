@@ -4008,8 +4008,34 @@
                 </div>
                 <button type="submit" class="btn btn-accent btn-block"><i class="fas fa-sign-in-alt"></i> Sign In</button>
                 <p class="demo-hint">New here? Signing up sends a one-time code to your email — <a href="#" onclick="showStudentSignup(); return false;">Create an account</a></p>
-                <p class="demo-hint"><a href="#" onclick="showForgotPassword(); return false;">Forgot password?</a></p>
+                <p class="demo-hint"><a href="#" onclick="showForgotPassword(); return false;">Forgot password?</a> &nbsp;·&nbsp; <a href="#" onclick="showOtpLogin(); return false;">Sign in with a code instead</a></p>
             </form>
+
+            <!-- STUDENT: Sign in with OTP — Step 1: email or phone -->
+            <div id="otpLoginStep1" class="login-form-panel" style="display:none;">
+                <p style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">No password needed — enter <strong>either</strong> your account email <strong>or</strong> phone and we'll send a one-time sign-in code.</p>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="otpLoginEmail" placeholder="you@gmail.com" autocomplete="email" />
+                </div>
+                <div class="form-group">
+                    <label>Phone Number</label>
+                    <input type="tel" id="otpLoginPhone" placeholder="98765 43210" autocomplete="tel" />
+                </div>
+                <button type="button" class="btn btn-accent btn-block" onclick="requestLoginOTP()"><i class="fas fa-paper-plane"></i> Send Sign-In Code</button>
+                <p class="demo-hint"><a href="#" onclick="showStudentLogin(); return false;">Back to sign in</a></p>
+            </div>
+
+            <!-- STUDENT: Sign in with OTP — Step 2: code -->
+            <div id="otpLoginStep2" class="login-form-panel" style="display:none;">
+                <p style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">We sent a 6-digit code to <strong id="otpLoginEmailDisplay"></strong>. Enter it below.</p>
+                <div class="form-group">
+                    <label>Sign-In Code</label>
+                    <input type="text" id="otpLoginCode" placeholder="123456" inputmode="numeric" maxlength="6" />
+                </div>
+                <button type="button" class="btn btn-accent btn-block" onclick="verifyLoginOTPStep()"><i class="fas fa-check"></i> Verify &amp; Sign In</button>
+                <p class="demo-hint"><a href="#" onclick="requestLoginOTP(true); return false;">Resend code</a></p>
+            </div>
 
             <!-- STUDENT: Forgot Password — Step 1: email -->
             <div id="forgotStep1" class="login-form-panel" style="display:none;">
@@ -6194,7 +6220,7 @@
         // back to the login screen instead of silently trusting stale data.
         let studentCreds = { identifier: '', password: '' };
 
-        const ALL_LOGIN_PANELS = ['studentLoginForm', 'signupStep1', 'signupStep2', 'signupStep3', 'forgotStep1', 'forgotStep2', 'forgotStep3'];
+        const ALL_LOGIN_PANELS = ['studentLoginForm', 'signupStep1', 'signupStep2', 'signupStep3', 'forgotStep1', 'forgotStep2', 'forgotStep3', 'otpLoginStep1', 'otpLoginStep2'];
         function hideAllStudentPanels() {
             ALL_LOGIN_PANELS.forEach(id => { document.getElementById(id).style.display = 'none'; });
         }
@@ -6292,6 +6318,84 @@
             showStudentLogin();
             document.getElementById('studentLoginEmail').value = pendingResetEmail;
         }
+
+        function showOtpLogin() {
+            hideAllStudentPanels();
+            document.getElementById('otpLoginStep1').style.display = 'block';
+        }
+
+        // Holds the identifier being verified across the 2 OTP-login
+        // steps, plus which channel it came through — email and phone
+        // hit completely different backend actions (sendLoginOTP vs
+        // sendPhoneOTP), unlike password login where one action handles
+        // either.
+        let pendingOtpLoginEmail = '';
+        let pendingOtpLoginPhone = '';
+        let pendingOtpLoginChannel = 'email';
+
+        async function requestLoginOTP(isResend) {
+            let target, channel;
+            if (isResend) {
+                channel = pendingOtpLoginChannel;
+                target = channel === 'email' ? pendingOtpLoginEmail : pendingOtpLoginPhone;
+            } else {
+                const email = document.getElementById('otpLoginEmail').value.trim();
+                const phone = document.getElementById('otpLoginPhone').value.trim();
+                if (!email && !phone) { showToast('Enter your email or phone number', 'error'); return; }
+                // Email wins if both are filled, matching the same
+                // "either field works" convention as password login.
+                channel = email ? 'email' : 'phone';
+                target = email || phone;
+                if (channel === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) {
+                    showToast('Enter a valid email address', 'error');
+                    return;
+                }
+            }
+            showToast('Sending sign-in code...', 'info');
+            let res;
+            try {
+                res = channel === 'email'
+                    ? await apiPost({ action: 'sendLoginOTP', email: target })
+                    : await apiPost({ action: 'sendPhoneOTP', phone: target });
+            } catch (err) {
+                showToast('Cannot reach server — check your internet connection', 'error');
+                return;
+            }
+            if (!res.success) { showToast(res.error || 'Could not send code', 'error'); return; }
+            pendingOtpLoginChannel = channel;
+            if (channel === 'email') pendingOtpLoginEmail = target; else pendingOtpLoginPhone = target;
+            document.getElementById('otpLoginEmailDisplay').textContent = target;
+            document.getElementById('otpLoginStep1').style.display = 'none';
+            document.getElementById('otpLoginStep2').style.display = 'block';
+            document.getElementById('otpLoginCode').value = '';
+            showToast(channel === 'email' ? '📧 Sign-in code sent! Check your inbox (and spam folder)' : '📱 Sign-in code sent via SMS', 'success');
+        }
+
+        async function verifyLoginOTPStep() {
+            const otp = document.getElementById('otpLoginCode').value.trim();
+            if (!otp) { showToast('Enter the code you received', 'error'); return; }
+            showToast('Verifying...', 'info');
+            let res;
+            try {
+                res = pendingOtpLoginChannel === 'email'
+                    ? await apiPost({ action: 'verifyLoginOTP', email: pendingOtpLoginEmail, otp: otp })
+                    : await apiPost({ action: 'verifyPhoneOTP', phone: pendingOtpLoginPhone, otp: otp });
+            } catch (err) {
+                showToast('Cannot reach server — check your internet connection', 'error');
+                return;
+            }
+            if (!res.success) { showToast(res.error || 'Incorrect code', 'error'); return; }
+            // Deliberately session-only: unlike password login, there's no
+            // password here to persist for tryAutoLoginStudent to silently
+            // re-validate against next visit, and no password to hand to
+            // bridgeStudentToFirebaseAuth either. Revisiting the app later
+            // just means requesting a fresh code again (or using a
+            // password, if one was ever set) — a small, honest trade-off
+            // for not inventing or storing a fake credential.
+            currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess };
+            completeLogin();
+        }
+
 
         // Holds the email being verified across the 3 signup steps.
         let pendingSignupEmail = '';
@@ -9032,10 +9136,7 @@
             const store = getStore();
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
-            await ensureTestQuestionsLoaded(test);
-            // This export includes correctAnswer per question — same
-            // requirement, same fix as Q&A mode and the PDF export above.
-            await ensureAnswerKeyLoaded(test);
+            await ensureTestFullyLoaded(test);
 
             const exportData = (test.questions || []).map(q => ({
                 question_en: q.question_en || '',
@@ -9068,11 +9169,7 @@
             const store = getStore();
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
-            await ensureTestQuestionsLoaded(test);
-            // The PDF's Answer Key section needs real correctAnswer values
-            // — same requirement as Q&A mode, same reason this call is
-            // needed here (see ensureAnswerKeyLoaded's own comment).
-            await ensureAnswerKeyLoaded(test);
+            await ensureTestFullyLoaded(test);
             const isBilingual = (test.questions || []).some(q => q.question_as && q.question_as !== q.question_en);
 
             const modalHtml = `
@@ -9094,8 +9191,7 @@
             const store = getStore();
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
-            await ensureTestQuestionsLoaded(test);
-            await ensureAnswerKeyLoaded(test); // no-op if openExportPdfModal already loaded it; defensive if ever called on its own
+            await ensureTestFullyLoaded(test); // no-op if openExportPdfModal already loaded it; defensive if ever called on its own
             showToast('Building PDF... this can take a moment if there are images', 'info');
             const jsPdfReady = await ensureJsPdfLoaded();
             if (!jsPdfReady) {
@@ -9572,23 +9668,22 @@
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
             showFullScreenLoader('Loading questions...');
-            let keyLoaded;
+            let ready;
             try {
-                await ensureTestQuestionsLoaded(test);
+                ready = await ensureTestFullyLoaded(test);
                 // CRITICAL: without this, every question's correctAnswer
-                // dropdown below defaults to "Option A" (index 0) since
-                // ensureTestQuestionsLoaded alone no longer includes real
-                // answers (see its own comment on why that's deferred).
-                // Saving this form after that would silently overwrite
-                // every question's actual correct answer with the wrong
-                // one — this is a genuine data-corruption risk, not just
-                // a display bug like the other spots this same pattern
-                // got missed.
-                keyLoaded = await ensureAnswerKeyLoaded(test);
+                // dropdown below defaults to "Option A" (index 0) since a
+                // partial load alone doesn't include real answers (see
+                // ensureTestFullyLoaded's own comment on why that's
+                // deferred elsewhere). Saving this form after that would
+                // silently overwrite every question's actual correct
+                // answer with the wrong one — this is a genuine data-
+                // corruption risk, not just a display bug like the other
+                // spots this same pattern got missed.
             } finally {
                 hideFullScreenLoader();
             }
-            if (!keyLoaded) {
+            if (!ready) {
                 showToast('Could not load current answers — check your connection and try again before editing', 'error');
                 return;
             }
@@ -11298,8 +11393,7 @@
             // permanently have no correct answers at all, since nothing
             // ever revisits a cloned test's questions afterward to fix it.
             if (moduleType === 'test') {
-                await ensureTestQuestionsLoaded(original);
-                await ensureAnswerKeyLoaded(original);
+                await ensureTestFullyLoaded(original);
             }
             const clone = JSON.parse(JSON.stringify(original));
             clone.id = generateId();
@@ -12675,6 +12769,46 @@
                 console.warn('Failed to load answer key for test', test.id, err);
             }
             return false;
+        }
+
+        // For everything that needs BOTH questions and the answer key
+        // right away (Q&A mode, the admin PDF/JSON export, the edit-test
+        // modal, cloning a test into a course) — unlike normal timed
+        // test-taking, which deliberately only needs questions up front
+        // (see ensureTestQuestionsLoaded's comment). Fetches both
+        // Firestore subcollections in parallel rather than one after the
+        // other, since neither fetch actually depends on the other —
+        // roughly halves the wait compared to calling
+        // ensureTestQuestionsLoaded then ensureAnswerKeyLoaded in
+        // sequence. Falls back to Apps Script (also in parallel-safe
+        // order) for whichever piece Firestore couldn't supply.
+        async function ensureTestFullyLoaded(test) {
+            if (test.questions && test.questions.length && test.questions[0].correctAnswer !== undefined) return true;
+            if (test.questionCount === 0) return true;
+
+            if (window.fetchFirestoreQuestions && window.fetchFirestoreAnswerKey) {
+                const needQuestions = !(test.questions && test.questions.length);
+                const [fsQuestions, fsAnswers] = await Promise.all([
+                    needQuestions ? window.fetchFirestoreQuestions(test.id) : Promise.resolve(null),
+                    window.fetchFirestoreAnswerKey(test.id)
+                ]);
+                if (needQuestions && fsQuestions && fsQuestions.length) test.questions = fsQuestions;
+                if (fsAnswers && test.questions && test.questions.length) {
+                    test.questions.forEach((q, i) => { q.correctAnswer = fsAnswers[i] ?? 0; });
+                }
+            }
+
+            // Whatever Firestore couldn't supply (not synced yet,
+            // offline, a permission hiccup) — same Apps Script safety
+            // net every other Firestore read in this file falls back to.
+            if (!test.questions || !test.questions.length) {
+                const loaded = await ensureTestQuestionsLoaded(test);
+                if (!loaded) return false;
+            }
+            if (test.questions[0].correctAnswer === undefined) {
+                await ensureAnswerKeyLoaded(test);
+            }
+            return !!(test.questions && test.questions.length && test.questions[0].correctAnswer !== undefined);
         }
 
         async function submitTest() {
@@ -14506,24 +14640,13 @@
         async function openTestQnaInner(test) {
             if (test.questionCount === 0) { showToast('This test has no questions yet', 'error'); return; }
             showFullScreenLoader('Loading questions...');
-            let loaded, keyLoaded;
+            let ready;
             try {
-                loaded = await ensureTestQuestionsLoaded(test);
-                // Q&A mode shows correct answers immediately (that's its
-                // whole purpose — study mode, not a timed exam), unlike
-                // normal test-taking which now deliberately defers this
-                // fetch to submitTest for speed (see ensureAnswerKeyLoaded's
-                // own comment). Skipping this call here was the actual
-                // bug behind "answer not showing" — every question's
-                // correctAnswer was undefined, so "Show only the answer"
-                // matched nothing (blank) and the correct-answer highlight
-                // in "Show all options" mode never applied either.
-                keyLoaded = loaded ? await ensureAnswerKeyLoaded(test) : false;
+                ready = await ensureTestFullyLoaded(test);
             } finally {
                 hideFullScreenLoader();
             }
-            if (!loaded) return; // ensureTestQuestionsLoaded already showed the real reason (network/timeout)
-            if (!keyLoaded) { showToast('Could not load answers — check your connection and try again', 'error'); return; }
+            if (!ready) { showToast('Could not load this test — check your connection and try again', 'error'); return; }
             if (!test.questions || !test.questions.length) { showToast('This test has no questions yet', 'error'); return; }
             qnaMode = 'test';
             activeTestQna = test;
