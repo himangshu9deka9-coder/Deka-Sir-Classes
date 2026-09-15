@@ -33,7 +33,7 @@
     not a module, so it can't `import` directly). -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
-        import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, writeBatch, query, where } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 
         const firebaseConfig = {
@@ -171,6 +171,44 @@
         // case and fall back to Apps Script without any special
         // handling — this function is designed to be safe to just
         // await and check for null.
+        // Firebase-first login fast path. Apps Script remains the ONLY
+        // authority for a password Firebase doesn't yet recognize (first
+        // login since this account was bridged, a password changed only
+        // in the Sheet, etc.) — these return {success:false} and the
+        // caller falls back to the original Apps-Script studentLogin/
+        // adminLogin flow, exactly as before. But for the common case —
+        // a student/admin who has logged in before and is therefore
+        // already bridged — this skips Apps Script entirely, which is
+        // where the login lag was actually coming from.
+        window.fetchFirebaseStudentLogin = async function (identifier, password) {
+            if (!window.auth || !window.db || !identifier.includes('@')) return { success: false };
+            const fbPassword = password.length < 6 ? (password + '_dsc00').slice(0, 6) : password;
+            try {
+                await signInWithEmailAndPassword(window.auth, identifier, fbPassword);
+            } catch (err) {
+                return { success: false }; // not bridged yet, wrong password, etc. — caller falls back to Apps Script
+            }
+            try {
+                const snap = await getDocs(query(collection(window.db, 'students'), where('email', '==', identifier)));
+                if (snap.empty) return { success: false }; // signed in but no profile doc — fall back rather than log in with no name/freeAccess
+                const s = snap.docs[0].data();
+                return { success: true, name: s.name, email: s.email, freeAccess: !!s.freeAccess };
+            } catch (err) {
+                return { success: false };
+            }
+        };
+
+        window.fetchFirebaseAdminLogin = async function (email, password) {
+            if (!window.auth || email !== 'dekasirclasses@gmail.com') return { success: false };
+            const fbPassword = password.length < 6 ? (password + '_dsc00').slice(0, 6) : password;
+            try {
+                await signInWithEmailAndPassword(window.auth, email, fbPassword);
+                return { success: true };
+            } catch (err) {
+                return { success: false };
+            }
+        };
+
         window.fetchFirestoreContent = async function () {
             try {
                 const [testsSnap, materialsSnap, foldersSnap, videosSnap, coursesSnap] = await Promise.all([
@@ -196,6 +234,64 @@
             } catch (err) {
                 console.warn('[Firestore] content read failed, will fall back to Apps Script this cycle:', err);
                 return null;
+            }
+        };
+
+        // The "later, more careful stage" referenced above: results and
+        // students have per-owner security rules, so what this fetches
+        // depends on who's asking —
+        //   - admin: the two full collections (needed for the dashboard,
+        //     the By Student view, and per-test result counts)
+        //   - student: only THEIR OWN results (queried by studentEmail)
+        //     and own student doc — every existing student-side use of
+        //     store.results/store.students only ever looks at "my own"
+        //     rows anyway, so this scoping doesn't lose anything for them
+        //   - logged out / no Firebase session yet: returns null so the
+        //     caller falls back to Apps Script, same convention as
+        //     fetchFirestoreContent above
+        window.fetchFirestoreResultsAndStudents = async function (role, email) {
+            if (!window.db || !window.auth?.currentUser) return null;
+            try {
+                if (role === 'admin') {
+                    const [resultsSnap, studentsSnap] = await Promise.all([
+                        getDocs(collection(window.db, 'results')),
+                        getDocs(collection(window.db, 'students'))
+                    ]);
+                    return {
+                        results: resultsSnap.docs.map(d => d.data()),
+                        students: studentsSnap.docs.map(d => d.data())
+                    };
+                }
+                if (role === 'student' && email) {
+                    const [resultsSnap, studentsSnap] = await Promise.all([
+                        getDocs(query(collection(window.db, 'results'), where('studentEmail', '==', email))),
+                        getDocs(query(collection(window.db, 'students'), where('email', '==', email)))
+                    ]);
+                    return {
+                        results: resultsSnap.docs.map(d => d.data()),
+                        students: studentsSnap.docs.map(d => d.data())
+                    };
+                }
+                return null;
+            } catch (err) {
+                console.warn('[Firestore] results/students read failed, will fall back to Apps Script this cycle:', err);
+                return null;
+            }
+        };
+
+        // Writes one result doc directly to Firestore — a thin wrapper so
+        // the plain <script> below (where submitResultToServer lives) can
+        // call it without importing setDoc/doc itself; those identifiers
+        // only exist inside this module block. Returns true/false rather
+        // than throwing, since the caller treats this as best-effort.
+        window.fetchFirestoreWriteResult = async function (result) {
+            if (!window.db) return false;
+            try {
+                await setDoc(doc(window.db, 'results', result.id), result);
+                return true;
+            } catch (err) {
+                console.warn('[Firestore] result write failed:', err);
+                return false;
             }
         };
 
@@ -5072,19 +5168,28 @@
                 // test's questions get fetched on demand once someone
                 // actually opens it.
                 //
-                // STAGE 5: tests/materials/folders/videos/courses now come
-                // from Firestore instead, fetched in true parallel with
-                // this Apps Script call (not after it) — apiGet still runs
-                // every cycle regardless, both because results/students
-                // aren't on Firestore yet (per-owner security rules need
-                // their own careful pass later) and as an automatic
-                // fallback source if the Firestore read below fails for
-                // any reason this cycle.
-                const [result, firestoreContent] = await Promise.all([
+                // STAGE 5/6: tests/materials/folders/videos/courses AND
+                // results/students now come from Firestore, fetched in true
+                // parallel with the Apps Script call (not after it) and via
+                // allSettled rather than all — a hanging/failing Apps
+                // Script call (purchases/access/activity are still Apps
+                // Script-only, so it still runs every cycle) must never
+                // block already-successful Firestore data from being used.
+                // That coupling — one slow source blanking a fast one — was
+                // the actual cause of "site won't load" / stuck skeleton
+                // boxes, not the content itself.
+                const [resultSettled, firestoreContentSettled, firestoreRSSettled] = await Promise.allSettled([
                     apiGet(undefined, 30000),
-                    (window.fetchFirestoreContent ? window.fetchFirestoreContent() : Promise.resolve(null))
+                    (window.fetchFirestoreContent ? window.fetchFirestoreContent() : Promise.resolve(null)),
+                    (window.fetchFirestoreResultsAndStudents ? window.fetchFirestoreResultsAndStudents(currentUser?.role, currentUser?.email) : Promise.resolve(null))
                 ]);
-                if (!result.success) return;
+                const result = (resultSettled.status === 'fulfilled' && resultSettled.value && resultSettled.value.success) ? resultSettled.value : { success: false, results: [], students: [] };
+                const firestoreContent = firestoreContentSettled.status === 'fulfilled' ? firestoreContentSettled.value : null;
+                const firestoreResultsStudents = firestoreRSSettled.status === 'fulfilled' ? firestoreRSSettled.value : null;
+                if (resultSettled.status === 'rejected') console.warn('Apps Script sync failed this cycle (Firestore data, if any, still applies):', resultSettled.reason);
+                // Nothing usable from ANY source this cycle — this is the
+                // one case actually worth bailing out on.
+                if (!result.success && !firestoreContent && !firestoreResultsStudents) return;
                 const isFirstSyncThisSession = !hasSyncedOnce;
                 // Confirmed real data has now been fetched from the server
                 // at least once — folder-grid renders use this to swap
@@ -5120,11 +5225,11 @@
                 // Results are append-only on the server, so a plain union by
                 // id is always safe — this also carries forward any older
                 // local-only attempts from before results started syncing.
-                const serverResults = result.results || [];
+                const serverResults = (firestoreResultsStudents ? firestoreResultsStudents.results : result.results) || [];
                 const serverIds = new Set(serverResults.map(r => r.id));
                 const localOnly = (store.results || []).filter(r => !serverIds.has(r.id));
                 const newResults = [...serverResults, ...localOnly];
-                const newStudents = result.students || [];
+                const newStudents = (firestoreResultsStudents ? firestoreResultsStudents.students : result.students) || [];
 
                 // This poll runs every 8 seconds for as long as the app is
                 // open. Re-rendering the ENTIRE page every single time,
@@ -5186,6 +5291,20 @@
                     result: result
                 });
                 if (!res.success) throw new Error(res.error || 'Unknown error');
+                // Best-effort mirror straight to Firestore — makes this
+                // result show up immediately in the admin's Firestore-based
+                // reads (dashboard, By Student) instead of only after a
+                // future manual re-migration. Never blocks or fails the
+                // function: the Apps Script write above already succeeded
+                // and remains the source of truth. Silently does nothing
+                // when there's no Firebase Auth session yet (e.g. the
+                // OTP-code login path, which never bridges into Firebase —
+                // see bridgeStudentToFirebaseAuth's comment) or no email on
+                // file, since an unscoped write there would just fail the
+                // security rules anyway.
+                if (window.db && window.auth?.currentUser && currentUser?.email && window.fetchFirestoreWriteResult) {
+                    window.fetchFirestoreWriteResult({ ...result, studentEmail: currentUser.email });
+                }
                 return true;
             } catch (err) {
                 showToast('⚠️ Score saved on this device, but could not reach the server to record it centrally', 'error');
@@ -6392,7 +6511,7 @@
             // just means requesting a fresh code again (or using a
             // password, if one was ever set) — a small, honest trade-off
             // for not inventing or storing a fake credential.
-            currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess };
+            currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess, email: res.email };
             completeLogin();
         }
 
@@ -6461,7 +6580,7 @@
             }
             if (!res.success) { showToast(res.error || 'Could not create account', 'error'); return; }
             studentCreds = { identifier: pendingSignupEmail, password: password };
-            currentUser = { name: res.name, role: 'student' };
+            currentUser = { name: res.name, role: 'student', email: res.email || pendingSignupEmail };
             try {
                 localStorage.setItem('dekaStudentSession', JSON.stringify(studentCreds));
             } catch (_) {}
@@ -6512,11 +6631,20 @@
             const pass = document.getElementById('loginPassword').value.trim();
             if (!email || !pass) { showToast('Enter admin email and password', 'error'); return; }
             showToast('Checking credentials...', 'info');
-            // These two checks are independent of each other (one talks
-            // to Apps Script, the other to Firebase Auth) — running them
-            // in parallel rather than one after another was previously
-            // making every admin login take the sum of both round trips
-            // instead of just the slower of the two.
+
+            // Fast path: already-bridged admin signs in via Firebase Auth
+            // directly, no Apps Script round trip at all.
+            const fb = window.fetchFirebaseAdminLogin ? await window.fetchFirebaseAdminLogin(email, pass) : { success: false };
+            if (fb.success) {
+                adminCreds = { email: email, password: pass };
+                currentUser = { name: 'Admin', role: 'admin' };
+                try { localStorage.setItem('dekaAdminSession', JSON.stringify(adminCreds)); } catch (_) {}
+                completeLogin();
+                return;
+            }
+
+            // Fallback: not bridged yet (or Firebase unreachable) — original
+            // Apps-Script-authoritative flow, which also bridges for next time.
             let authResult, bridged;
             try {
                 [authResult, bridged] = await Promise.all([
@@ -6544,6 +6672,15 @@
             let saved;
             try { saved = JSON.parse(localStorage.getItem('dekaAdminSession') || 'null'); } catch (_) { saved = null; }
             if (!saved || !saved.email || !saved.password) return false;
+
+            const fb = window.fetchFirebaseAdminLogin ? await window.fetchFirebaseAdminLogin(saved.email, saved.password) : { success: false };
+            if (fb.success) {
+                adminCreds = saved;
+                currentUser = { name: 'Admin', role: 'admin' };
+                completeLogin();
+                return true;
+            }
+
             try {
                 // Same parallelization as submitAdminLogin above — see
                 // its comment for why these don't need to be sequential.
@@ -6572,6 +6709,23 @@
             const identifier = email || phone; // either row works, email wins if both are filled
             if (!identifier || !password) { showToast('Enter your email or phone, plus your password', 'error'); return; }
             showToast('Signing in...', 'info');
+
+            // Fast path: already-bridged student (email identifier only —
+            // phone-only accounts have no Firebase Auth email to sign in
+            // with) signs in via Firebase Auth directly, no Apps Script
+            // round trip at all.
+            const fb = window.fetchFirebaseStudentLogin ? await window.fetchFirebaseStudentLogin(identifier, password) : { success: false };
+            if (fb.success) {
+                studentCreds = { identifier: identifier, password: password };
+                currentUser = { name: fb.name, role: 'student', freeAccess: fb.freeAccess, email: fb.email };
+                try { localStorage.setItem('dekaStudentSession', JSON.stringify(studentCreds)); } catch (_) {}
+                completeLogin();
+                return;
+            }
+
+            // Fallback: not bridged yet, phone-only login, or Firebase
+            // unreachable — original Apps-Script-authoritative flow, which
+            // also bridges for next time.
             let res;
             try {
                 res = await apiPost({ action: 'studentLogin', identifier, password });
@@ -6581,7 +6735,7 @@
             }
             if (!res.success) { showToast(res.error || 'Invalid login', 'error'); return; }
             studentCreds = { identifier: identifier, password: password };
-            currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess };
+            currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess, email: res.email };
             try {
                 localStorage.setItem('dekaStudentSession', JSON.stringify(studentCreds));
             } catch (_) {}
@@ -6601,6 +6755,15 @@
             let saved;
             try { saved = JSON.parse(localStorage.getItem('dekaStudentSession') || 'null'); } catch (_) { saved = null; }
             if (!saved || !saved.identifier || !saved.password) return false;
+
+            const fb = window.fetchFirebaseStudentLogin ? await window.fetchFirebaseStudentLogin(saved.identifier, saved.password) : { success: false };
+            if (fb.success) {
+                studentCreds = saved;
+                currentUser = { name: fb.name, role: 'student', freeAccess: fb.freeAccess, email: fb.email };
+                completeLogin();
+                return true;
+            }
+
             try {
                 const res = await apiPost({ action: 'studentLogin', identifier: saved.identifier, password: saved.password });
                 if (!res.success) {
@@ -6608,7 +6771,7 @@
                     return false;
                 }
                 studentCreds = saved;
-                currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess };
+                currentUser = { name: res.name, role: 'student', freeAccess: !!res.freeAccess, email: res.email };
                 if (window.bridgeStudentToFirebaseAuth) window.bridgeStudentToFirebaseAuth(res.email, saved.password);
                 completeLogin();
                 return true;
@@ -11830,16 +11993,42 @@
                 return;
             }
             container.innerHTML = `<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><h4>Loading student activity…</h4></div>`;
+
+            // Results/students come from Firestore now (fast, and not tied
+            // to the same slow multi-sheet read below) — render with those
+            // the moment they're back instead of waiting on Apps Script
+            // too. purchases/materialViews/videoWatch are still Apps
+            // Script-only for now, so they arrive a little later and patch
+            // into the same view once ready; a slow/failed Apps Script
+            // call no longer leaves this stuck on the spinner forever —
+            // that coupling was the actual "stuck Loading" bug.
+            const fsData = window.fetchFirestoreResultsAndStudents
+                ? await window.fetchFirestoreResultsAndStudents('admin')
+                : null;
+            let base = fsData
+                ? { students: fsData.students, results: fsData.results, materialViews: [], videoWatch: [], purchases: [] }
+                : null;
+            if (base) {
+                studentActivityData = base;
+                renderStudentActivityList(base);
+            }
+
             try {
                 const result = await apiPost({ action: 'getStudentActivity', email: adminCreds.email, password: adminCreds.password });
                 if (!result.success) {
-                    container.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><h4>${escapeHtml(result.error || 'Could not load activity')}</h4></div>`;
+                    if (!base) container.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><h4>${escapeHtml(result.error || 'Could not load activity')}</h4></div>`;
                     return;
                 }
-                studentActivityData = result;
-                renderStudentActivityList(result);
+                // Merge: keep Firestore's results/students (source of truth
+                // now) if we have them, add in the Apps-Script-only slices.
+                const merged = base
+                    ? { students: base.students, results: base.results, materialViews: result.materialViews, videoWatch: result.videoWatch, purchases: result.purchases }
+                    : result;
+                studentActivityData = merged;
+                renderStudentActivityList(merged);
             } catch (err) {
-                container.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><h4>Could not reach server</h4></div>`;
+                if (!base) container.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><h4>Could not reach server</h4></div>`;
+                // else: the Firestore-sourced view above already rendered — leave it up rather than replacing it with an error.
             }
         }
 
