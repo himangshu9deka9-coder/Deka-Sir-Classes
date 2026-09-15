@@ -237,44 +237,54 @@
             }
         };
 
-        // The "later, more careful stage" referenced above: results and
-        // students have per-owner security rules, so what this fetches
-        // depends on who's asking —
-        //   - admin: the two full collections (needed for the dashboard,
+        // The "later, more careful stage" referenced above: results,
+        // students, materialViews, and videoWatch all have per-owner
+        // security rules, so what this fetches depends on who's asking —
+        //   - admin: the four full collections (needed for the dashboard,
         //     the By Student view, and per-test result counts)
-        //   - student: only THEIR OWN results (queried by studentEmail)
-        //     and own student doc — every existing student-side use of
-        //     store.results/store.students only ever looks at "my own"
-        //     rows anyway, so this scoping doesn't lose anything for them
+        //   - student: only THEIR OWN rows (queried by studentEmail/email)
+        //     — every existing student-side use of store.results/
+        //     store.students only ever looks at "my own" rows anyway, so
+        //     this scoping doesn't lose anything for them
         //   - logged out / no Firebase session yet: returns null so the
         //     caller falls back to Apps Script, same convention as
         //     fetchFirestoreContent above
+        // Purchases stays Apps-Script-only on purpose (payment data)
+        // — not fetched here.
         window.fetchFirestoreResultsAndStudents = async function (role, email) {
             if (!window.db || !window.auth?.currentUser) return null;
             try {
                 if (role === 'admin') {
-                    const [resultsSnap, studentsSnap] = await Promise.all([
+                    const [resultsSnap, studentsSnap, materialViewsSnap, videoWatchSnap] = await Promise.all([
                         getDocs(collection(window.db, 'results')),
-                        getDocs(collection(window.db, 'students'))
+                        getDocs(collection(window.db, 'students')),
+                        getDocs(collection(window.db, 'materialViews')),
+                        getDocs(collection(window.db, 'videoWatch'))
                     ]);
                     return {
                         results: resultsSnap.docs.map(d => d.data()),
-                        students: studentsSnap.docs.map(d => d.data())
+                        students: studentsSnap.docs.map(d => d.data()),
+                        materialViews: materialViewsSnap.docs.map(d => d.data()),
+                        videoWatch: videoWatchSnap.docs.map(d => d.data())
                     };
                 }
                 if (role === 'student' && email) {
-                    const [resultsSnap, studentsSnap] = await Promise.all([
+                    const [resultsSnap, studentsSnap, materialViewsSnap, videoWatchSnap] = await Promise.all([
                         getDocs(query(collection(window.db, 'results'), where('studentEmail', '==', email))),
-                        getDocs(query(collection(window.db, 'students'), where('email', '==', email)))
+                        getDocs(query(collection(window.db, 'students'), where('email', '==', email))),
+                        getDocs(query(collection(window.db, 'materialViews'), where('studentEmail', '==', email))),
+                        getDocs(query(collection(window.db, 'videoWatch'), where('studentEmail', '==', email)))
                     ]);
                     return {
                         results: resultsSnap.docs.map(d => d.data()),
-                        students: studentsSnap.docs.map(d => d.data())
+                        students: studentsSnap.docs.map(d => d.data()),
+                        materialViews: materialViewsSnap.docs.map(d => d.data()),
+                        videoWatch: videoWatchSnap.docs.map(d => d.data())
                     };
                 }
                 return null;
             } catch (err) {
-                console.warn('[Firestore] results/students read failed, will fall back to Apps Script this cycle:', err);
+                console.warn('[Firestore] results/students/activity read failed, will fall back to Apps Script this cycle:', err);
                 return null;
             }
         };
@@ -11994,19 +12004,23 @@
             }
             container.innerHTML = `<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><h4>Loading student activity…</h4></div>`;
 
-            // Results/students come from Firestore now (fast, and not tied
-            // to the same slow multi-sheet read below) — render with those
-            // the moment they're back instead of waiting on Apps Script
-            // too. purchases/materialViews/videoWatch are still Apps
-            // Script-only for now, so they arrive a little later and patch
-            // into the same view once ready; a slow/failed Apps Script
-            // call no longer leaves this stuck on the spinner forever —
-            // that coupling was the actual "stuck Loading" bug.
+            // Results/students/materialViews/videoWatch all come from
+            // Firestore now (Apps Script already mirrors every write to
+            // these collections there — see logMaterialView/logVideoWatch/
+            // submitResult in Code.gs — so this needed no backend change,
+            // only wiring the read). Render the moment Firestore is back
+            // instead of waiting on Apps Script too. Purchases (payment
+            // data) stays Apps-Script-authoritative on purpose, via the
+            // light purchases-only endpoint (not the old 5-sheet
+            // getStudentActivity call) — it arrives a little later and
+            // patches into the same view once ready; a slow/failed Apps
+            // Script call no longer leaves this stuck on the spinner
+            // forever, which was the actual "stuck Loading" bug.
             const fsData = window.fetchFirestoreResultsAndStudents
                 ? await window.fetchFirestoreResultsAndStudents('admin')
                 : null;
             let base = fsData
-                ? { students: fsData.students, results: fsData.results, materialViews: [], videoWatch: [], purchases: [] }
+                ? { students: fsData.students, results: fsData.results, materialViews: fsData.materialViews, videoWatch: fsData.videoWatch, purchases: allPurchasesCache || [] }
                 : null;
             if (base) {
                 studentActivityData = base;
@@ -12014,16 +12028,16 @@
             }
 
             try {
-                const result = await apiPost({ action: 'getStudentActivity', email: adminCreds.email, password: adminCreds.password });
+                const result = await apiPost({ action: 'getAllPurchases', email: adminCreds.email, password: adminCreds.password });
                 if (!result.success) {
                     if (!base) container.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><h4>${escapeHtml(result.error || 'Could not load activity')}</h4></div>`;
                     return;
                 }
-                // Merge: keep Firestore's results/students (source of truth
-                // now) if we have them, add in the Apps-Script-only slices.
+                allPurchasesCache = result.purchases || [];
+                purchasesLoaded = true;
                 const merged = base
-                    ? { students: base.students, results: base.results, materialViews: result.materialViews, videoWatch: result.videoWatch, purchases: result.purchases }
-                    : result;
+                    ? { ...base, purchases: allPurchasesCache }
+                    : { students: [], results: [], materialViews: [], videoWatch: [], purchases: allPurchasesCache };
                 studentActivityData = merged;
                 renderStudentActivityList(merged);
             } catch (err) {
