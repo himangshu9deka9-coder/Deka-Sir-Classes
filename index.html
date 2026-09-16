@@ -5643,6 +5643,13 @@
                                 // instead of guessing blind.
                                 console.warn('[Firestore] mirroring this save failed — Sheets is saved correctly, but Firestore may be stale until the next save or a manual migration re-run:', err);
                                 showToast('Saved, but Firestore sync had a problem (' + (err?.code || err?.message || 'unknown') + ') — students may briefly see stale content', 'error');
+                                // TEMPORARY — diagnosing a silent failure
+                                // that the toast above was apparently
+                                // being missed for. Remove this alert()
+                                // once the real cause is found; it's
+                                // deliberately blocking so it can't be
+                                // missed or auto-dismissed like the toast.
+                                alert('Firestore sync failed:\ncode: ' + (err?.code || 'none') + '\nmessage: ' + (err?.message || String(err)));
                             }
                         })();
                     }
