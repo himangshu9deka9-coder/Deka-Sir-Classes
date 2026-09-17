@@ -5677,6 +5677,7 @@
                     // ENTIRE test bank (every test, every question,
                     // every answer key) on a single save. That was the
                     // actual cause of the Firestore write-quota spike.
+                }
             } catch (err) {
                 clearTimeout(savingToastTimer);
                 showToast('⚠️ Sync failed — will keep retrying in the background. Don\'t close this tab yet.', 'error');
