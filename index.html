@@ -33,7 +33,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
         import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, writeBatch, query, where } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendEmailVerification } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDVKEABR6sNudb8VxreOuxxPB4AIbNvZAw",
@@ -194,6 +194,55 @@
                 return { success: true, name: s.name, email: s.email, freeAccess: !!s.freeAccess };
             } catch (err) {
                 return { success: false };
+            }
+        };
+
+        // Signup, Firebase-native: creates the account directly and sends
+        // Firebase's own built-in verification email (a link, not a typed
+        // code) — no Apps Script/MailApp involved, since that round trip
+        // was the actual source of the "code never shows up" lag. The
+        // account exists in Firebase immediately, but the app treats it
+        // as provisional until fetchFirebaseCheckVerified() confirms the
+        // link was clicked — that's what gates creating the Sheet record.
+        window.fetchFirebaseSignupCreate = async function (email, password) {
+            if (!window.auth) return { success: false, error: 'Firebase not ready — try again in a moment' };
+            const fbPassword = password.length < 6 ? (password + '_dsc00').slice(0, 6) : password;
+            try {
+                const cred = await createUserWithEmailAndPassword(window.auth, email, fbPassword);
+                await sendEmailVerification(cred.user);
+                return { success: true };
+            } catch (err) {
+                let msg = 'Could not create account';
+                if (err?.code === 'auth/email-already-in-use') msg = 'An account with this email already exists — try signing in, or use "Forgot password".';
+                else if (err?.code === 'auth/invalid-email') msg = 'Enter a valid email address';
+                else if (err?.code === 'auth/weak-password') msg = 'Password must be at least 6 characters';
+                return { success: false, error: msg, code: err?.code };
+            }
+        };
+
+        // Polls the current signed-in (but not yet verified) user's
+        // status. Firebase doesn't push verification events to the
+        // client, so this must be actively re-checked — reload() re-pulls
+        // the user's record, which is the only way emailVerified updates
+        // after the link is clicked elsewhere (another tab, another
+        // device, another browser entirely).
+        window.fetchFirebaseCheckVerified = async function () {
+            if (!window.auth?.currentUser) return false;
+            try {
+                await window.auth.currentUser.reload();
+                return !!window.auth.currentUser.emailVerified;
+            } catch (err) {
+                return false;
+            }
+        };
+
+        window.fetchFirebaseResendVerification = async function () {
+            if (!window.auth?.currentUser) return { success: false };
+            try {
+                await sendEmailVerification(window.auth.currentUser);
+                return { success: true };
+            } catch (err) {
+                return { success: false, error: err?.message };
             }
         };
 
@@ -4300,23 +4349,20 @@
                     <label>Phone Number</label>
                     <input type="tel" id="signupPhone" placeholder="98765 43210" autocomplete="tel" />
                 </div>
-                <button type="button" class="btn btn-accent btn-block" onclick="requestSignupOTP()"><i class="fas fa-paper-plane"></i> Send Verification Code</button>
+                <div class="form-group">
+                    <label>Choose a Password</label>
+                    <input type="password" id="signupPassword" placeholder="At least 6 characters" autocomplete="new-password" />
+                </div>
+                <button type="button" class="btn btn-accent btn-block" onclick="submitSignupStep1()"><i class="fas fa-paper-plane"></i> Create Account</button>
                 <p class="demo-hint">Already have an account? <a href="#" onclick="showStudentLogin(); return false;">Sign in</a></p>
             </div>
 
-            <!-- STUDENT: Sign Up — Step 2: OTP + password together, one screen -->
+            <!-- STUDENT: Sign Up — Step 2: waiting for the email verification link -->
             <div id="signupStep2" class="login-form-panel" style="display:none;">
-                <p style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">We emailed a 6-digit code to <strong id="signupEmailDisplay"></strong>. Enter it below along with the password you'd like to use.</p>
-                <div class="form-group">
-                    <label>Verification Code</label>
-                    <input type="text" id="signupOtp" placeholder="123456" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
-                </div>
-                <div class="form-group">
-                    <label>Choose a Password</label>
-                    <input type="password" id="signupPassword" placeholder="At least 4 characters" autocomplete="new-password" />
-                </div>
-                <button type="button" class="btn btn-accent btn-block" onclick="finishSignup()"><i class="fas fa-user-plus"></i> Verify &amp; Create Account</button>
-                <p class="demo-hint"><a href="#" onclick="requestSignupOTP(true); return false;">Resend code</a> · <a href="#" onclick="showStudentSignupStep1(); return false;">Change email</a></p>
+                <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">We sent a verification link to <strong id="signupEmailDisplay"></strong>. Open it on this device or any other — this page checks automatically and continues the moment it's confirmed.</p>
+                <div style="text-align:center;padding:10px 0;"><i class="fas fa-circle-notch fa-spin" style="font-size:22px;color:var(--accent-color, #f59e0b);"></i></div>
+                <button type="button" class="btn btn-accent btn-block" onclick="checkSignupVerified(true)"><i class="fas fa-rotate"></i> I've clicked the link — Continue</button>
+                <p class="demo-hint"><a href="#" onclick="resendSignupVerification(); return false;">Resend email</a> · <a href="#" onclick="showStudentSignupStep1(); return false;">Change email</a></p>
             </div>
 
             <!-- ADMIN -->
@@ -6505,6 +6551,7 @@
             document.getElementById('authModeTabSignUp')?.classList.remove('active');
         }
         function showStudentSignupStep1() {
+            stopSignupVerifyPolling();
             document.getElementById('signupStep2').style.display = 'none';
             document.getElementById('signupStep1').style.display = 'block';
         }
@@ -6653,75 +6700,94 @@
 
         // Holds the email being verified across the 3 signup steps.
         let pendingSignupEmail = '';
+        let pendingSignupPassword = '';
+        let signupVerifyPollTimer = null;
 
-        async function requestSignupOTP(isResend) {
+        async function submitSignupStep1() {
             const name = document.getElementById('signupName').value.trim();
             const email = document.getElementById('signupEmail').value.trim();
             const phone = document.getElementById('signupPhone').value.trim();
-            if (!isResend && (!name || !email || !phone)) {
-                showToast('Fill in your name, email, and phone number', 'error');
+            const password = document.getElementById('signupPassword').value;
+            if (!name || !email || !phone || !password) {
+                showToast('Fill in your name, email, phone, and password', 'error');
                 return;
             }
-            const targetEmail = isResend ? pendingSignupEmail : email;
-            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
                 showToast('Enter a valid email address', 'error');
                 return;
             }
-            // Show the OTP + password screen right away — don't gate it
-            // behind a successful round trip. Sending the email is the
-            // slow part server-side; if the confirmation response takes
-            // too long or drops, the email can still arrive fine, but
-            // waiting for that response before showing this screen left
-            // people stuck on step 1 with a code already sitting in
-            // their inbox. The resend link below covers the case where
-            // the send genuinely failed.
-            pendingSignupEmail = targetEmail;
-            document.getElementById('signupEmailDisplay').textContent = targetEmail;
+            if (password.length < 6) {
+                showToast('Password must be at least 6 characters', 'error');
+                return;
+            }
+            if (!window.fetchFirebaseSignupCreate) {
+                showToast('Signup isn\'t ready yet — try again in a moment', 'error');
+                return;
+            }
+            showToast('Creating your account...', 'info');
+            const res = await window.fetchFirebaseSignupCreate(email, password);
+            if (!res.success) { showToast(res.error || 'Could not create account', 'error'); return; }
+            pendingSignupEmail = email;
+            pendingSignupPassword = password;
+            document.getElementById('signupEmailDisplay').textContent = email;
             document.getElementById('signupStep1').style.display = 'none';
             document.getElementById('signupStep2').style.display = 'block';
-            document.getElementById('signupOtp').value = '';
-            showToast('Sending verification code...', 'info');
+            showToast('✅ Account created — check your email for the link', 'success');
+            startSignupVerifyPolling();
+        }
+
+        // Auto-checks every few seconds while the "waiting" screen is up,
+        // so clicking the link (on this device or any other) advances
+        // the signup without the user needing to come back and tap
+        // anything. Also cleared whenever that screen isn't showing.
+        function startSignupVerifyPolling() {
+            stopSignupVerifyPolling();
+            signupVerifyPollTimer = setInterval(() => checkSignupVerified(false), 4000);
+        }
+        function stopSignupVerifyPolling() {
+            if (signupVerifyPollTimer) { clearInterval(signupVerifyPollTimer); signupVerifyPollTimer = null; }
+        }
+
+        async function resendSignupVerification() {
+            showToast('Sending...', 'info');
+            const res = window.fetchFirebaseResendVerification ? await window.fetchFirebaseResendVerification() : { success: false };
+            showToast(res.success ? '📧 Sent again — check your inbox (and spam folder)' : 'Could not resend right now — try again shortly', res.success ? 'success' : 'error');
+        }
+
+        // manual=true when the person tapped "I've clicked the link"
+        // themselves (shows feedback either way); manual=false when this
+        // is a silent background poll (only acts on success, stays quiet
+        // on a not-yet-verified result so it doesn't nag every 4 seconds).
+        async function checkSignupVerified(manual) {
+            if (!window.fetchFirebaseCheckVerified) return;
+            const verified = await window.fetchFirebaseCheckVerified();
+            if (!verified) {
+                if (manual) showToast('Not verified yet — open the link from the email first', 'info');
+                return;
+            }
+            stopSignupVerifyPolling();
+            const name = document.getElementById('signupName').value.trim();
+            const phone = document.getElementById('signupPhone').value.trim();
+            showToast('Verified! Finishing setup...', 'info');
             let res;
             try {
-                res = await apiPost({ action: 'sendSignupOTP', email: targetEmail });
+                res = await apiPost({ action: 'completeSignupFirebase', name, email: pendingSignupEmail, phone });
             } catch (err) {
-                showToast('Could not confirm the code was sent — check your email in a minute, or tap "Resend code" below', 'error');
+                showToast('Verified, but couldn\'t reach the server to finish setup — try "Continue" again', 'error');
+                startSignupVerifyPolling();
                 return;
             }
             if (!res.success) {
-                showToast(res.error || 'Could not send code — tap "Resend code" below to try again', 'error');
-                return;
+                // Most likely this student record already exists (e.g.
+                // they hit Continue twice) — treat that as success rather
+                // than blocking a verified account from proceeding.
+                if (!/already exists/i.test(res.error || '')) {
+                    showToast(res.error || 'Could not finish setting up your account', 'error');
+                    return;
+                }
             }
-            showToast('📧 Code sent! Check your inbox (and spam folder)', 'success');
-        }
-
-        async function finishSignup() {
-            const name = document.getElementById('signupName').value.trim();
-            const phone = document.getElementById('signupPhone').value.trim();
-            const otp = document.getElementById('signupOtp').value.trim();
-            const password = document.getElementById('signupPassword').value;
-            if (!otp) { showToast('Enter the code from your email', 'error'); return; }
-            if (!password || password.length < 4) { showToast('Password must be at least 4 characters', 'error'); return; }
-            showToast('Verifying code...', 'info');
-            let verifyRes;
-            try {
-                verifyRes = await apiPost({ action: 'verifySignupOTP', email: pendingSignupEmail, otp: otp });
-            } catch (err) {
-                showToast('Cannot reach server — check your internet connection', 'error');
-                return;
-            }
-            if (!verifyRes.success) { showToast(verifyRes.error || 'Incorrect code', 'error'); return; }
-            showToast('Creating your account...', 'info');
-            let res;
-            try {
-                res = await apiPost({ action: 'completeSignup', name, email: pendingSignupEmail, phone, password });
-            } catch (err) {
-                showToast('Cannot reach server — check your internet connection', 'error');
-                return;
-            }
-            if (!res.success) { showToast(res.error || 'Could not create account', 'error'); return; }
-            studentCreds = { identifier: pendingSignupEmail, password: password };
-            currentUser = { name: res.name, role: 'student', email: res.email || pendingSignupEmail };
+            studentCreds = { identifier: pendingSignupEmail, password: pendingSignupPassword };
+            currentUser = { name: res.name || name, role: 'student', email: pendingSignupEmail };
             try {
                 localStorage.setItem('dekaStudentSession', JSON.stringify(studentCreds));
             } catch (_) {}
@@ -7081,6 +7147,7 @@
         // Lets a guest dismiss the login screen (X button, or tapping the
         // dark backdrop) without signing in — goes right back to browsing.
         function closeLoginOverlay() {
+            stopSignupVerifyPolling();
             if (currentUser) {
                 // Someone mid-way through switching accounts backed out —
                 // just hide it, no need to re-run the whole guest setup.
