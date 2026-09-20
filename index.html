@@ -15183,6 +15183,97 @@
             </div>`;
         }
 
+        // Holds whichever test/material the PDF options modal is
+        // currently configured for — set by whichever of the two entry
+        // points below was used, then read by submitQnaPdfOptions().
+        let pdfPromptSource = null;
+
+        // Entry point 1: from inside the Q&A viewer itself (test or material).
+        function openQnaPdfOptions() {
+            const isTest = qnaMode === 'test';
+            const source = isTest ? activeTestQna : activeQna;
+            if (!source) { showToast('Nothing open to export right now', 'error'); return; }
+            pdfPromptSource = { type: isTest ? 'test' : 'material', data: source };
+            openPdfOptionsModal(pdfPromptSource, { defaultMode: qnaShowMode, defaultHints: qnaHintsVisible });
+        }
+
+        // Entry point 2: straight from a test's row in the mock list
+        // (next to Edit/Firestore) — doesn't require opening the Q&A
+        // viewer first. Loads the test's questions if this session
+        // hasn't already.
+        async function openPdfOptionsForTest(testId) {
+            const store = getStore();
+            const test = store.tests.find(t => t.id === testId);
+            if (!test) { showToast('Test not found', 'error'); return; }
+            showToast('Loading questions...', 'info');
+            await ensureTestFullyLoaded(test);
+            pdfPromptSource = { type: 'test', data: test };
+            openPdfOptionsModal(pdfPromptSource, { defaultMode: 'answer', defaultHints: false });
+        }
+
+        function openPdfOptionsModal(source, defaults) {
+            const isTest = source.type === 'test';
+            const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
+            if (!questions.length) { showToast('Nothing to export — this has no questions yet', 'error'); return; }
+            const isBilingual = questions.some(q => q.question_as && q.question_as !== q.question_en);
+            const hasAnyHint = isTest && questions.some(q => q.hint_en || q.hint_as);
+
+            let langRow = '';
+            if (isBilingual) {
+                langRow = `
+                    <div class="form-group">
+                        <label>Language</label>
+                        <div style="display:flex;gap:8px;">
+                            <button type="button" class="btn btn-sm btn-outline pdf-opt-lang active" data-val="en" onclick="setPdfOptBtn(this)"><i class="fas fa-font"></i> English</button>
+                            <button type="button" class="btn btn-sm btn-outline pdf-opt-lang" data-val="as" onclick="setPdfOptBtn(this)"><i class="fas fa-font"></i> Assamese</button>
+                            <button type="button" class="btn btn-sm btn-outline pdf-opt-lang" data-val="both" onclick="setPdfOptBtn(this)"><i class="fas fa-language"></i> Both</button>
+                        </div>
+                    </div>`;
+            }
+            let modeRow = '';
+            if (isTest) {
+                modeRow = `
+                    <div class="form-group">
+                        <label>Options</label>
+                        <div style="display:flex;gap:8px;">
+                            <button type="button" class="btn btn-sm btn-outline pdf-opt-mode ${defaults.defaultMode === 'answer' ? 'active' : ''}" data-val="answer" onclick="setPdfOptBtn(this)"><i class="fas fa-circle-check"></i> Answer only</button>
+                            <button type="button" class="btn btn-sm btn-outline pdf-opt-mode ${defaults.defaultMode === 'options' ? 'active' : ''}" data-val="options" onclick="setPdfOptBtn(this)"><i class="fas fa-list"></i> All options</button>
+                        </div>
+                    </div>`;
+            }
+            let hintsRow = '';
+            if (hasAnyHint) {
+                hintsRow = `
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                            <input type="checkbox" id="pdfOptHints" ${defaults.defaultHints ? 'checked' : ''} style="width:16px;height:16px;" />
+                            Include hints
+                        </label>
+                    </div>`;
+            }
+
+            openModal(`
+                <div class="modal-header"><h3><i class="fas fa-file-pdf"></i> Export as PDF</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+                ${langRow}
+                ${modeRow}
+                ${hintsRow}
+                <button class="btn btn-primary btn-block" style="margin-top:6px;" onclick="submitQnaPdfOptions()"><i class="fas fa-file-pdf"></i> Generate PDF</button>
+            `);
+        }
+
+        function setPdfOptBtn(btn) {
+            document.querySelectorAll('.' + btn.className.split(' ').find(c => c.startsWith('pdf-opt-'))).forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        function submitQnaPdfOptions() {
+            const lang = document.querySelector('.pdf-opt-lang.active')?.dataset.val || 'en';
+            const mode = document.querySelector('.pdf-opt-mode.active')?.dataset.val || 'answer';
+            const hints = document.getElementById('pdfOptHints')?.checked || false;
+            closeModal();
+            printQnaPdf(pdfPromptSource, { lang, mode, hints });
+        }
+
         const PDF_ORIGINAL_TITLE_HOLDER = { title: null };
 
         // Paginates question blocks into explicit, fixed-size A4 pages
