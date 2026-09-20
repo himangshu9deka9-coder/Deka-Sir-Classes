@@ -15349,8 +15349,12 @@
                 window.removeEventListener('afterprint', restoreTitle);
             };
             window.addEventListener('afterprint', restoreTitle);
-            showToast('Opening print dialog — choose "Save as PDF" as the destination', 'info');
-            setTimeout(() => window.print(), 80);
+            showToast('Opening print preview — choose "Save as PDF" (or, on iPhone, tap the share icon and "Save to Files")', 'info');
+            // Called synchronously (no setTimeout) and with no prior
+            // await in this function — mobile Safari/Chrome silently
+            // block window.print() unless it's still within the same
+            // call stack as the user's tap that triggered it.
+            window.print();
         }
     </script>
 </body>
