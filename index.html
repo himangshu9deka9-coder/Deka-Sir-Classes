@@ -22,6 +22,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js">
     </script>
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://www.youtube.com/iframe_api"></script>
 
     <!-- ================================================================
@@ -1759,6 +1761,12 @@
             background: rgba(255, 255, 255, 0.08);
             transform: translateY(-2px);
         }
+        .btn-info {
+            background: linear-gradient(135deg, #0ea5e9, #0369a1);
+            color: #fff;
+            border: none;
+        }
+        .btn-info:hover { transform: translateY(-2px); filter: brightness(1.08); }
         .btn-outline {
             background: transparent;
             border: 1px solid var(--glass-border);
@@ -4152,16 +4160,13 @@
            combination is what produces trailing blank pages when the
            browser's own page-break math doesn't divide evenly; building
            each page as a complete, correctly-sized unit sidesteps that
-           class of bug entirely.
+           class of bug entirely. It's also no longer printed via the
+           browser at all — see printQnaPdf()'s use of html2canvas +
+           jsPDF for a direct file download instead, which sidesteps
+           mobile browsers' "blocked from automatically printing"
+           restriction on window.print() entirely.
            ================================================================ */
         #qnaPdfPrintArea { position: fixed; left: -99999px; top: 0; }
-        @page { size: A4; margin: 0; }
-        @media print {
-            body > *:not(#qnaPdfPrintArea) { display: none !important; }
-            #qnaPdfPrintArea { position: static; left: auto; display: block !important; }
-            #qnaPdfPrintArea .pdf-page { page-break-after: always; }
-            #qnaPdfPrintArea .pdf-page:last-child { page-break-after: auto; }
-        }
         #qnaPdfPrintArea { background: #fff; color: #1c1a15; }
         #qnaPdfPrintArea .pdf-page {
             background: #fffdf7; width: 794px; height: 1123px; position: relative;
@@ -4953,9 +4958,6 @@
                     </button>
                     <button class="tt-theme-toggle" id="qnaHintsToggle" onclick="toggleAllQnaHints()" aria-label="Show/hide hints" title="Show/hide hints">
                         <i class="fas fa-lightbulb"></i>
-                    </button>
-                    <button class="tt-theme-toggle" onclick="openQnaPdfOptions()" aria-label="Export as PDF" title="Export as PDF">
-                        <i class="fas fa-file-pdf"></i>
                     </button>
                     <button class="tt-theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme" title="Toggle theme">
                         <i class="fas fa-moon theme-icon theme-toggle-icon"></i>
@@ -8499,6 +8501,7 @@
                         <div class="card-actions">
                             <button class="btn btn-primary btn-sm" onclick="startTest('${t.id}')"><i class="fas fa-play"></i> Start Mock</button>
                             ${!t.qnaButtonHidden ? `<button class="btn btn-secondary btn-sm" onclick="openTestQna('${t.id}')"><i class="fas fa-clipboard-question"></i> Start Q&amp;A</button>` : ''}
+                            ${(currentUser?.role === 'admin' || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : 'Unlock PDF'}</button>` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -8863,6 +8866,7 @@
                         <div class="card-actions">
                             <button class="btn btn-primary btn-sm" onclick="startTest('${t.id}')"><i class="fas fa-play"></i> Start Mock</button>
                             <button class="btn btn-secondary btn-sm" onclick="openTestQna('${t.id}')" style="${t.qnaButtonHidden ? 'display:none;' : ''}"><i class="fas fa-clipboard-question"></i> Start Q&amp;A</button>
+                            ${(currentUser?.role === 'admin' || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : 'Unlock PDF'}</button>` : ''}
                             <button class="btn btn-accent btn-sm" onclick="viewTestResults('${t.id}')"><i class="fas fa-chart-bar"></i></button>
                             ${currentUser?.role === 'admin' ? `
                             <button class="btn btn-secondary btn-sm" onclick="openEditTestModal('${t.id}')"><i class="fas fa-edit"></i> Edit</button>
@@ -8870,7 +8874,8 @@
                             <button class="btn btn-danger btn-sm" onclick="deleteTest('${t.id}')"><i class="fas fa-trash"></i></button>
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
                             <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
-                            <button class="btn btn-outline btn-sm" onclick="openPdfOptionsForTest('${t.id}')" title="Export this test's Q&A as a PDF"><i class="fas fa-file-pdf"></i> PDF</button>
+                            <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPdfVisible('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
+                            <button class="btn ${t.pdfLocked ? 'btn-danger' : 'btn-outline'} btn-sm" onclick="toggleTestPdfLock('${t.id}')" title="${t.pdfLocked ? 'PDF download locked — ₹' + (t.pdfPrice || 0) + ' (tap to unlock)' : 'PDF download is free (tap to lock + set a price)'}"><i class="fas fa-${t.pdfLocked ? 'lock' : 'lock-open'}"></i> PDF Lock</button>
                             ` : ''}
                         </div>
                     </div>
@@ -8912,6 +8917,7 @@
                         <div class="card-actions">
                             ${!isDraft || isAdmin ? `<button class="btn btn-primary btn-sm" onclick="startTest('${t.id}')"><i class="fas fa-${unlocked ? 'play' : 'lock'}"></i> ${isAdmin && isDraft ? 'Preview' : (unlocked ? 'Start Mock' : 'Unlock')}</button>` : ''}
                             ${(!isDraft || isAdmin) && !t.qnaButtonHidden ? `<button class="btn btn-secondary btn-sm" onclick="openTestQna('${t.id}')"><i class="fas fa-${unlocked ? 'clipboard-question' : 'lock'}"></i> ${unlocked ? 'Start Q&amp;A' : 'Unlock'}</button>` : ''}
+                            ${(!isDraft || isAdmin) && (isAdmin || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : 'Unlock PDF'}</button>` : ''}
                             <button class="btn btn-accent btn-sm" onclick="viewTestResults('${t.id}')"><i class="fas fa-chart-bar"></i></button>
                             ${isAdmin ? `
                             <button class="btn ${isDraft ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPublish('${t.id}')"><i class="fas fa-${isDraft ? 'globe' : 'eye-slash'}"></i> ${isDraft ? 'Publish' : 'Unpublish'}</button>
@@ -8925,7 +8931,8 @@
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
                             <button class="btn ${t.qnaButtonHidden ? 'btn-outline' : 'btn-success'} btn-sm" onclick="toggleTestQnaButton('${t.id}')" title="${t.qnaButtonHidden ? 'Show the Start Q&A button to students' : 'Hide the Start Q&A button from students'}"><i class="fas fa-${t.qnaButtonHidden ? 'eye-slash' : 'eye'}"></i> Q&amp;A Btn</button>
                             <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
-                            <button class="btn btn-outline btn-sm" onclick="openPdfOptionsForTest('${t.id}')" title="Export this test's Q&A as a PDF"><i class="fas fa-file-pdf"></i> PDF</button>
+                            <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPdfVisible('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
+                            <button class="btn ${t.pdfLocked ? 'btn-danger' : 'btn-outline'} btn-sm" onclick="toggleTestPdfLock('${t.id}')" title="${t.pdfLocked ? 'PDF download locked — ₹' + (t.pdfPrice || 0) + ' (tap to unlock)' : 'PDF download is free (tap to lock + set a price)'}"><i class="fas fa-${t.pdfLocked ? 'lock' : 'lock-open'}"></i> PDF Lock</button>
                             ` : ''}
                         </div>
                     </div>
@@ -13940,6 +13947,66 @@
             showToast(test.qnaButtonHidden ? 'Start Q&A button hidden for this test' : 'Start Q&A button shown for this test', 'success');
         }
 
+        // Download-PDF is a separate opt-in feature per test — hidden by
+        // default (student.pdfDownloadVisible starts undefined/false) so
+        // admin decides per test whether to offer it at all before
+        // anyone ever sees the button.
+        function toggleTestPdfVisible(testId) {
+            const store = getStore();
+            const test = store.tests.find(t => t.id === testId);
+            if (!test) return;
+            test.pdfDownloadVisible = !test.pdfDownloadVisible;
+            saveStore(store);
+            renderAllFolders();
+            renderTests(currentTestFolderId);
+            showToast(test.pdfDownloadVisible ? 'Download PDF button shown for this test' : 'Download PDF button hidden for this test', 'success');
+        }
+
+        // A genuinely separate lock/price from the test's own — see
+        // getItemInfo's "testPdf" branch in Code.gs. A student can own
+        // the mock but still need to pay for the PDF, or vice versa.
+        function toggleTestPdfLock(testId) {
+            const store = getStore();
+            const test = store.tests.find(t => t.id === testId);
+            if (!test) return;
+            if (!test.pdfLocked) {
+                const priceInput = prompt('Set a price in ₹ for downloading this test\'s PDF:', test.pdfPrice || '20');
+                if (priceInput === null) return;
+                const price = Number(priceInput);
+                if (!price || price <= 0) { showToast('Enter a valid price greater than 0', 'error'); return; }
+                test.pdfLocked = true;
+                test.pdfPrice = price;
+            } else {
+                test.pdfLocked = false;
+            }
+            saveStore(store);
+            renderAllFolders();
+            renderTests(currentTestFolderId);
+            showToast(test.pdfLocked ? `PDF download locked — ₹${test.pdfPrice}` : 'PDF download unlocked — now free', 'success');
+        }
+
+        function isTestPdfUnlockedForMe(t) {
+            if (!t.pdfLocked) return true;
+            if (currentUser?.role === 'student' && currentUser.freeAccess) return true;
+            if (myUnlockedSet.has('testPdf:' + t.id)) return true;
+            return false;
+        }
+
+        // The student/admin-facing "Download PDF" button's click handler
+        // — pays/unlocks first if this test's PDF specifically is locked
+        // (independent of the mock's own lock), then opens the same
+        // format-options modal as the admin's own PDF button.
+        function downloadTestPdfClick(testId) {
+            const store = getStore();
+            const t = store.tests.find(x => x.id === testId);
+            if (!t) return;
+            if (currentUser?.role === 'admin' || isTestPdfUnlockedForMe(t)) {
+                openPdfOptionsForTest(testId);
+            } else {
+                requireUnlocked('testPdf', t.id, t.pdfPrice || 0, t.title + ' — PDF download', () => openPdfOptionsForTest(testId));
+            }
+        }
+
         function toggleItemLock(itemType, id) {
             const store = getStore();
             const list = itemType === 'test' ? store.tests : (itemType === 'material' ? store.materials : store.videos);
@@ -15183,24 +15250,15 @@
             </div>`;
         }
 
-        // Holds whichever test/material the PDF options modal is
-        // currently configured for — set by whichever of the two entry
-        // points below was used, then read by submitQnaPdfOptions().
+        // Holds whichever test the PDF options modal is currently
+        // configured for — set by openPdfOptionsForTest below, then
+        // read by submitQnaPdfOptions().
         let pdfPromptSource = null;
 
-        // Entry point 1: from inside the Q&A viewer itself (test or material).
-        function openQnaPdfOptions() {
-            const isTest = qnaMode === 'test';
-            const source = isTest ? activeTestQna : activeQna;
-            if (!source) { showToast('Nothing open to export right now', 'error'); return; }
-            pdfPromptSource = { type: isTest ? 'test' : 'material', data: source };
-            openPdfOptionsModal(pdfPromptSource, { defaultMode: qnaShowMode, defaultHints: qnaHintsVisible });
-        }
-
-        // Entry point 2: straight from a test's row in the mock list
-        // (next to Edit/Firestore) — doesn't require opening the Q&A
-        // viewer first. Loads the test's questions if this session
-        // hasn't already.
+        // Entry point: from a test's "Download PDF" button (student-
+        // facing, on the test card) or the admin's own PDF button in
+        // the management row — both call this. Loads the test's
+        // questions first if this session hasn't already.
         async function openPdfOptionsForTest(testId) {
             const store = getStore();
             const test = store.tests.find(t => t.id === testId);
@@ -15274,7 +15332,6 @@
             printQnaPdf(pdfPromptSource, { lang, mode, hints });
         }
 
-        const PDF_ORIGINAL_TITLE_HOLDER = { title: null };
 
         // Paginates question blocks into explicit, fixed-size A4 pages
         // (each with its own header/footer) rather than one long flowing
@@ -15342,19 +15399,47 @@
             });
 
             const safeName = title.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-            PDF_ORIGINAL_TITLE_HOLDER.title = document.title;
-            document.title = `${safeName}_qna_${opts.lang}`;
-            const restoreTitle = () => {
-                document.title = PDF_ORIGINAL_TITLE_HOLDER.title;
-                window.removeEventListener('afterprint', restoreTitle);
-            };
-            window.addEventListener('afterprint', restoreTitle);
-            showToast('Opening print preview — choose "Save as PDF" (or, on iPhone, tap the share icon and "Save to Files")', 'info');
-            // Called synchronously (no setTimeout) and with no prior
-            // await in this function — mobile Safari/Chrome silently
-            // block window.print() unless it's still within the same
-            // call stack as the user's tap that triggered it.
-            window.print();
+            const filename = `${safeName}_qna_${opts.lang}.pdf`;
+
+            const libsReady = await ensurePdfLibsLoaded();
+            if (!libsReady) {
+                showToast('Could not load the PDF tools — check your connection and try again', 'error');
+                return;
+            }
+            // Let web fonts finish loading before rasterizing — otherwise
+            // Assamese text can get captured mid-swap from its fallback
+            // glyphs to Noto Sans Bengali.
+            try { await document.fonts.ready; } catch (_) {}
+
+            showToast(`Rendering ${pages.length} page${pages.length === 1 ? '' : 's'}...`, 'info');
+            try {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF({ unit: 'px', format: [794, 1123], hotfixes: ['px_scaling'] });
+                const pageEls = Array.from(container.querySelectorAll('.pdf-page'));
+                for (let i = 0; i < pageEls.length; i++) {
+                    const canvas = await html2canvas(pageEls[i], { scale: 2, useCORS: true, backgroundColor: '#fffdf7' });
+                    const imgData = canvas.toDataURL('image/jpeg', 0.92);
+                    if (i > 0) doc.addPage([794, 1123], 'p');
+                    doc.addImage(imgData, 'JPEG', 0, 0, 794, 1123);
+                }
+                doc.save(filename);
+                showToast('✅ PDF downloaded!', 'success');
+            } catch (err) {
+                console.error(err);
+                showToast('PDF generation failed: ' + (err.message || err), 'error');
+            }
+        }
+
+        // Both scripts are plain (non-async/defer) <script src> tags near
+        // the top of <head>, so by the time any of this runs they're
+        // normally already loaded — this poll is just a safety net for a
+        // slow connection rather than the primary loading mechanism.
+        async function ensurePdfLibsLoaded() {
+            const start = Date.now();
+            while ((!window.jspdf || !window.html2canvas) && Date.now() - start < 8000) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+            return !!(window.jspdf && window.html2canvas);
         }
     </script>
 </body>
