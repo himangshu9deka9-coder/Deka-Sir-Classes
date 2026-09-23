@@ -4166,7 +4166,7 @@
            mobile browsers' "blocked from automatically printing"
            restriction on window.print() entirely.
            ================================================================ */
-        #qnaPdfPrintArea { position: fixed; left: -99999px; top: 0; }
+        #qnaPdfPrintArea { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; }
         #qnaPdfPrintArea { background: #fff; color: #1c1a15; }
         #qnaPdfPrintArea .pdf-page {
             background: #fffdf7; width: 794px; height: 1123px; position: relative;
