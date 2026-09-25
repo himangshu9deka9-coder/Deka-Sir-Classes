@@ -8930,6 +8930,7 @@
                             <button class="btn btn-danger btn-sm" onclick="deleteTest('${t.id}')"><i class="fas fa-trash"></i></button>
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
                             <button class="btn ${t.qnaButtonHidden ? 'btn-outline' : 'btn-success'} btn-sm" onclick="toggleTestQnaButton('${t.id}')" title="${t.qnaButtonHidden ? 'Show the Start Q&A button to students' : 'Hide the Start Q&A button from students'}"><i class="fas fa-${t.qnaButtonHidden ? 'eye-slash' : 'eye'}"></i> Q&amp;A Btn</button>
+                            <button class="btn ${t.guestAllowed ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestGuestAccess('${t.id}')" title="${t.guestAllowed ? 'This mock is open to visitors with no account \u2014 tap to require sign-in again' : 'Let visitors with no account try this mock (Start Mock / Q&A / PDF), free'}"><i class="fas fa-${t.guestAllowed ? 'unlock' : 'user-slash'}"></i> Guest Access</button>
                             <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
                             <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPdfVisible('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
                             <button class="btn ${t.pdfLocked ? 'btn-danger' : 'btn-outline'} btn-sm" onclick="toggleTestPdfLock('${t.id}')" title="${t.pdfLocked ? 'PDF download locked — ₹' + (t.pdfPrice || 0) + ' (tap to unlock)' : 'PDF download is free (tap to lock + set a price)'}"><i class="fas fa-${t.pdfLocked ? 'lock' : 'lock-open'}"></i> PDF Lock</button>
@@ -12468,8 +12469,14 @@
                 const store = getStore();
                 const test = store.tests.find(t => t.id === testId);
                 if (!test) { showToast('Test not found', 'error'); return; }
-                if (!currentUser) { showToast('Please sign in to start this test', 'error'); openLoginFromGuest('student'); return; }
-                if (test.published === false && currentUser.role !== 'admin') {
+                // guestAllowed (see toggleTestGuestAccess) is the one explicit
+                // admin-set exception to this — a "free sample" mock a
+                // signed-out visitor can take without an account. Their
+                // attempt still isn't saved anywhere (see the result-save
+                // block below and saveTestProgress's own currentUser guard) —
+                // it's a try-it-out, not a tracked attempt.
+                if (!currentUser && !test.guestAllowed) { showToast('Please sign in to start this test', 'error'); openLoginFromGuest('student'); return; }
+                if (test.published === false && currentUser?.role !== 'admin') {
                     showToast('This mock test is not published yet', 'error');
                     return;
                 }
@@ -12480,13 +12487,20 @@
                     return;
                 }
 
-                const existing = store.results.filter(r => r.testId === testId && r.studentName === currentUser.name);
-                if (existing.length > 0) {
-                    if (!confirm('Retake? Previous result will be overwritten.')) return;
-                    store.results = store.results.filter(r => !(r.testId === testId && r.studentName === currentUser
-                    .name));
-                    saveStore(store);
-                    clearTestProgress(testId, currentUser.name); // starting fresh, drop any stale unfinished attempt too
+                // Retake-detection and resume-from-crash both key off
+                // currentUser.name, so both are meaningless (and would throw
+                // on null) for a signed-out guestAllowed attempt — a guest
+                // always just starts fresh, same as someone using the app
+                // for the very first time.
+                if (currentUser) {
+                    const existing = store.results.filter(r => r.testId === testId && r.studentName === currentUser.name);
+                    if (existing.length > 0) {
+                        if (!confirm('Retake? Previous result will be overwritten.')) return;
+                        store.results = store.results.filter(r => !(r.testId === testId && r.studentName === currentUser
+                        .name));
+                        saveStore(store);
+                        clearTestProgress(testId, currentUser.name); // starting fresh, drop any stale unfinished attempt too
+                    }
                 }
 
                 activeTest = { ...test };
@@ -12495,7 +12509,7 @@
                 // Offer to resume an unfinished attempt from earlier (crash,
                 // closed tab, dead battery, etc.) instead of always starting over.
                 let resumed = false;
-                try {
+                if (currentUser) try {
                     const savedRaw = localStorage.getItem(testProgressKey(testId, currentUser.name));
                     if (savedRaw) {
                         const saved = JSON.parse(savedRaw);
@@ -13053,7 +13067,7 @@
                 id: generateId(),
                 testId: activeTest.id,
                 testTitle: activeTest.title,
-                studentName: currentUser.name,
+                studentName: currentUser ? currentUser.name : 'Guest',
                 score: correct,
                 total: total,
                 percentage: percentage,
@@ -13064,12 +13078,20 @@
                 tabSwitches: tabSwitchCount
             };
 
-            const store = getStore();
-            store.results = store.results.filter(r => !(r.testId === activeTest.id && r.studentName === currentUser.name));
-            store.results.push(result);
-            saveStore(store);
-            submitResultToServer(result); // reaches the Sheet regardless of role — this is what makes class-wide analytics possible
-            clearTestProgress(activeTest.id, currentUser.name);
+            // A signed-out guestAllowed attempt is never saved locally or
+            // pushed to the Sheet — there's no real account to attach it
+            // to, "Guest" isn't a unique identity, and one guest's result
+            // would just overwrite the next guest's under the same filter
+            // below. The score is still computed and shown (below), it
+            // just isn't persisted or tracked in analytics.
+            if (currentUser) {
+                const store = getStore();
+                store.results = store.results.filter(r => !(r.testId === activeTest.id && r.studentName === currentUser.name));
+                store.results.push(result);
+                saveStore(store);
+                submitResultToServer(result); // reaches the Sheet regardless of role — this is what makes class-wide analytics possible
+                clearTestProgress(activeTest.id, currentUser.name);
+            }
 
             // Restore the submit button's markup (including #ttSubmitLabel)
             // before closing — otherwise the next startTest() call finds
@@ -13947,6 +13969,25 @@
             showToast(test.qnaButtonHidden ? 'Start Q&A button hidden for this test' : 'Start Q&A button shown for this test', 'success');
         }
 
+        // Lets admin mark ONE specific mock as a free sample any visitor
+        // can Start Mock / Start Q&A / Download PDF on with no account at
+        // all — independent of the test's own paid lock (see
+        // isTestPdfUnlockedForMe/toggleItemLock), which still applies on
+        // top if the admin also happens to have this test locked. A
+        // guestAllowed attempt at the actual mock is never saved or
+        // synced anywhere (see submitTest) — it's a try-before-you-sign-up
+        // preview, not a tracked attempt.
+        function toggleTestGuestAccess(testId) {
+            const store = getStore();
+            const test = store.tests.find(t => t.id === testId);
+            if (!test) return;
+            test.guestAllowed = !test.guestAllowed;
+            saveStore(store);
+            renderAllFolders();
+            renderTests(currentTestFolderId);
+            showToast(test.guestAllowed ? 'This mock can now be opened with no account' : 'This mock now requires an account', 'success');
+        }
+
         // Download-PDF is a separate opt-in feature per test — hidden by
         // default (student.pdfDownloadVisible starts undefined/false) so
         // admin decides per test whether to offer it at all before
@@ -14000,7 +14041,16 @@
             const store = getStore();
             const t = store.tests.find(x => x.id === testId);
             if (!t) return;
-            if (currentUser?.role === 'admin' || isTestPdfUnlockedForMe(t)) {
+            if (currentUser?.role === 'admin') { openPdfOptionsForTest(testId); return; }
+            // Same account gate as Start Mock / Start Q&A. isTestPdfUnlockedForMe
+            // only ever checked PAYMENT (t.pdfLocked), not sign-in — so any
+            // free-PDF test was downloadable by a signed-out guest too.
+            if (!currentUser && !t.guestAllowed) {
+                showToast('Please sign in to download this', 'error');
+                openLoginFromGuest('student');
+                return;
+            }
+            if (isTestPdfUnlockedForMe(t)) {
                 openPdfOptionsForTest(testId);
             } else {
                 requireUnlocked('testPdf', t.id, t.pdfPrice || 0, t.title + ' — PDF download', () => openPdfOptionsForTest(testId));
@@ -14906,6 +14956,16 @@
             if (!test) { showToast('Test not found', 'error'); return; }
             // Admins can always preview their own content.
             if (currentUser?.role === 'admin') { openTestQnaInner(test); return; }
+            // Same account gate startTestInner already applies to "Start
+            // Mock" — this used to have none at all, so a signed-out
+            // visitor could open Start Q&A on any non-locked test for
+            // free. guestAllowed is the one explicit admin-set exception
+            // (see toggleTestGuestAccess).
+            if (!currentUser && !test.guestAllowed) {
+                showToast('Please sign in to start this test', 'error');
+                openLoginFromGuest('student');
+                return;
+            }
             if (viewCourseId) {
                 if ((test.courseFreeIds || []).includes(viewCourseId)) {
                     openTestQnaInner(test);
@@ -15264,7 +15324,15 @@
             const test = store.tests.find(t => t.id === testId);
             if (!test) { showToast('Test not found', 'error'); return; }
             showToast('Loading questions...', 'info');
-            await ensureTestFullyLoaded(test);
+            // Bug fix: this used to ignore ensureTestFullyLoaded's return
+            // value entirely, so a failed load (Firestore permission
+            // hiccup, offline, slow connection) left test.questions empty
+            // and silently fell through to openPdfOptionsModal's own
+            // "Nothing to export" toast — which fires right on the heels
+            // of the "Loading questions..." toast above and reads to a
+            // student as "I pressed Download and nothing happened."
+            const ready = await ensureTestFullyLoaded(test);
+            if (!ready) { showToast('Could not load this test — check your connection and try again', 'error'); return; }
             pdfPromptSource = { type: 'test', data: test };
             openPdfOptionsModal(pdfPromptSource, { defaultMode: 'answer', defaultHints: false });
         }
