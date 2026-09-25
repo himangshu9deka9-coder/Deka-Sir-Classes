@@ -22,8 +22,6 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js">
     </script>
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://www.youtube.com/iframe_api"></script>
 
     <!-- ================================================================
@@ -4152,27 +4150,43 @@
            running — the browser's own print engine handles pagination
            and font rendering, including Assamese (via the Noto Sans
            Bengali web font above), far more reliably than trying to hand-
-           embed a font into jsPDF. See printQnaPdf() in the script below.
+           embed a font into jsPDF, and produces a small, text-searchable,
+           native PDF instead of one big rasterized image per page (which
+           is what made files enormous, made "Download" take minutes with
+           no visible progress since the whole render happened silently
+           before anything was handed to the browser, and had no per-page
+           save prompt at all — the file only appeared, all at once, once
+           html2canvas+jsPDF finished entirely).
 
-           Pages are explicit, fixed-size A4 boxes (794x1123px @ 96dpi)
-           that the JS paginates into directly — not one long flowing
-           page-break-after chain with a position:fixed footer. That
-           combination is what produces trailing blank pages when the
-           browser's own page-break math doesn't divide evenly; building
-           each page as a complete, correctly-sized unit sidesteps that
-           class of bug entirely. It's also no longer printed via the
-           browser at all — see printQnaPdf()'s use of html2canvas +
-           jsPDF for a direct file download instead, which sidesteps
-           mobile browsers' "blocked from automatically printing"
-           restriction on window.print() entirely.
+           This used to be built as explicit, fixed-size A4 boxes
+           (794x1123px) manually paginated in JS and then rasterized —
+           that measurement pass is why questions occasionally got cut
+           mid-block: openPdfOptionsForTest's own bug (see there) could
+           leave a question's height mismeasured against a stale/partial
+           layout. Printing real flowing HTML with page-break-inside:avoid
+           on each question block (see .pdf-q-block below) hands
+           pagination to the browser's print engine instead, which
+           doesn't have that failure mode. The one thing to watch here is
+           that this is a *repeat* of a design once tried and abandoned
+           (see version history) over trailing-blank-page bugs — those
+           came from a one-long-page-break-after chain combined with a
+           position:fixed footer; the difference this time is every
+           question block still gets its own explicit page-break-inside:
+           avoid (unchanged from before) and the header/footer are BOTH
+           fixed (not just the footer), which is the layout the working
+           reference this was rebuilt from actually uses. See
+           printQnaPdf() in the script below, and the "Save as PDF"
+           step happens in the browser's own native print dialog, which
+           is what puts the finished file in the device's normal
+           Downloads location with the browser's own progress UI —
+           nothing here downloads anything on its own.
            ================================================================ */
-        #qnaPdfPrintArea { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; }
-        #qnaPdfPrintArea { background: #fff; color: #1c1a15; }
+        @page { size: A4; margin: 14mm 0; }
+        #qnaPdfPrintArea { display: none; background: #fff; color: #1c1a15; }
         #qnaPdfPrintArea .pdf-page {
-            background: #fffdf7; width: 794px; height: 1123px; position: relative;
-            display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box;
+            background: #fffdf7; position: relative; box-sizing: border-box;
         }
-        #qnaPdfPrintArea .pdf-cover-page { padding: 48px 50px 0; }
+        #qnaPdfPrintArea .pdf-cover-page { padding: 48px 50px 0; display: flex; flex-direction: column; min-height: 700px; }
         #qnaPdfPrintArea .pdf-cover-badge-wrap { display: flex; justify-content: center; margin-bottom: 14px; }
         #qnaPdfPrintArea .pdf-cover-badge {
             width: 150px; height: 150px; border-radius: 50%; border: 5px solid #101d33; background: #fff;
@@ -4194,22 +4208,28 @@
         #qnaPdfPrintArea .pdf-mini-badge img { width: 100%; height: 100%; object-fit: contain; }
         #qnaPdfPrintArea .pdf-cover-bottom-text { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 13px; color: #101d33; }
         /* Compact repeating header on every content page (not the cover) */
+        /* Fixed (not in-flow) on purpose: with one continuous content
+           flow instead of manually-built per-page divs, this is what
+           makes the header/footer repeat on every printed page — a
+           standard CSS-print technique. Positioned relative to each
+           physical page during printing regardless of DOM nesting. */
         #qnaPdfPrintArea .pdf-page-header {
-            flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+            display: flex; align-items: center; gap: 10px;
             padding: 12px 40px; border-bottom: 1px solid #dcd4bc; background: #fffdf7;
         }
         #qnaPdfPrintArea .pdf-page-header .pdf-mini-badge { width: 30px; height: 30px; }
         #qnaPdfPrintArea .pdf-page-header-text { flex: 1; min-width: 0; }
         #qnaPdfPrintArea .pdf-page-header-brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 12.5px; color: #e0562f; }
         #qnaPdfPrintArea .pdf-page-header-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 10.5px; color: #5b5646; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        #qnaPdfPrintArea .pdf-doc-body { flex: 1 1 auto; padding: 20px 50px; position: relative; min-height: 0; }
+        #qnaPdfPrintArea .pdf-doc-body { position: relative; padding: 74px 50px 62px; }
         #qnaPdfPrintArea .pdf-content-footer {
-            flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 10px;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
             padding: 10px 40px; border-top: 1px solid #dcd4bc; background: #fffdf7;
             font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; color: #101d33;
         }
-        #qnaPdfPrintArea .pdf-watermark { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; display: flex; align-items: center; justify-content: center; }
+        #qnaPdfPrintArea .pdf-watermark { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
         #qnaPdfPrintArea .pdf-watermark span {
+            position: absolute; left: 0; right: 0; text-align: center;
             font-family: 'Inter', sans-serif; font-weight: 800; font-size: 44px; color: #101d33; opacity: .06;
             transform: rotate(-30deg); white-space: nowrap; display: block;
         }
@@ -4246,6 +4266,21 @@
         }
         #qnaPdfPrintArea .pdf-q-hint.as { font-family: 'Noto Sans Bengali', sans-serif; }
         #qnaPdfPrintArea .pdf-rule-line { display: none; }
+        @media print {
+            /* #qnaPdfPrintArea is parsed as the first child of <body>
+               (a stray flow element found while still "in head" gets
+               relocated there per HTML parsing rules) — hiding every
+               other direct child of body leaves only this to print,
+               without depending on any element being invisible by
+               default the rest of the time. */
+            body > *:not(#qnaPdfPrintArea) { display: none !important; }
+            #qnaPdfPrintArea { display: block !important; }
+            #qnaPdfPrintArea .pdf-page { page-break-after: always; }
+            #qnaPdfPrintArea .pdf-page:last-child { page-break-after: auto; }
+            #qnaPdfPrintArea .pdf-cover-page { height: 273mm; min-height: 0; }
+            #qnaPdfPrintArea .pdf-page-header { position: fixed; top: 0; left: 0; right: 0; z-index: 2; }
+            #qnaPdfPrintArea .pdf-content-footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; }
+        }
     </style>
     <div id="qnaPdfPrintArea"></div>
 </head>
@@ -15401,113 +15436,70 @@
         }
 
 
-        // Paginates question blocks into explicit, fixed-size A4 pages
-        // (each with its own header/footer) rather than one long flowing
-        // page with a fixed-position footer and browser auto-pagination —
-        // the latter is what produced trailing blank pages in testing.
-        // Every block's real rendered height is measured directly (images
-        // have a fixed CSS height, so this never has to wait on image
-        // loads to get an accurate number), then greedily packed onto
-        // pages so no question is ever split across a page break.
-        async function printQnaPdf(source, opts) {
+        // Renders every question as one continuous flowing list (real
+        // HTML, not a canvas image) and hands pagination to the browser's
+        // own print engine via window.print() — .pdf-q-block's own
+        // page-break-inside:avoid (in the CSS above) is what keeps a
+        // question from ever being split across a page, and the fixed-
+        // position header/footer (also above, print-media only) repeat
+        // on every physical page automatically. The person picks "Save
+        // as PDF" in their browser's own print dialog, which is what
+        // puts the result in their device's normal Downloads location
+        // with the browser's own native progress/UI — nothing here
+        // triggers a download on its own.
+        const ORIGINAL_QNA_PDF_DOCUMENT_TITLE = document.title;
+        function printQnaPdf(source, opts) {
             if (!source || !source.data) return;
             const isTest = source.type === 'test';
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
             if (!questions.length) { showToast('Nothing to export', 'error'); return; }
-            showToast('Building PDF...', 'info');
 
             const title = source.data.title || (isTest ? 'Mock Test' : 'Study Material');
             const container = document.getElementById('qnaPdfPrintArea');
-            container.innerHTML = buildPdfCoverPageHtml(title, questions.length);
 
-            // Measure exactly how much vertical room is left for
-            // questions once the header/footer/padding are accounted
-            // for, using a real (temporary) page rather than hardcoded
-            // numbers — stays correct even if the CSS above changes.
-            const probe = document.createElement('div');
-            probe.className = 'pdf-page pdf-content-page';
-            probe.innerHTML = buildPdfPageHeaderHtml(title) + '<div class="pdf-doc-body"></div>' + buildPdfPageFooterHtml();
-            container.appendChild(probe);
-            const maxListHeight = probe.querySelector('.pdf-doc-body').clientHeight;
-            const bodyContentWidth = probe.querySelector('.pdf-doc-body').clientWidth;
-            probe.remove();
+            let listHtml = '';
+            questions.forEach((q, i) => { listHtml += buildPdfQBlockHtml(q, i, isTest, opts); });
 
-            // Off-DOM-flow measuring sandbox, same content width as the
-            // real page body so wrapping (and therefore height) matches.
-            const measure = document.createElement('div');
-            measure.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;width:${bodyContentWidth}px;`;
-            document.body.appendChild(measure);
-
-            const pages = [[]];
-            let currentHeight = 0;
-            questions.forEach((q, i) => {
-                const blockHtml = buildPdfQBlockHtml(q, i, isTest, opts);
-                measure.innerHTML = blockHtml;
-                // +22 accounts for .pdf-q-block's own margin-bottom, which
-                // offsetHeight on the block itself doesn't include.
-                const blockH = measure.firstElementChild.offsetHeight + 22;
-                if (currentHeight + blockH > maxListHeight && pages[pages.length - 1].length > 0) {
-                    pages.push([]);
-                    currentHeight = 0;
-                }
-                pages[pages.length - 1].push(blockHtml);
-                currentHeight += blockH;
-            });
-            measure.remove();
-
-            pages.forEach(blocks => {
-                container.insertAdjacentHTML('beforeend', `<div class="pdf-page pdf-content-page">
+            container.innerHTML = buildPdfCoverPageHtml(title, questions.length) +
+                `<div class="pdf-page pdf-content-page">
                     ${buildPdfPageHeaderHtml(title)}
                     <div class="pdf-doc-body">
-                        <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
-                        <div class="pdf-q-list">${blocks.join('')}</div>
+                        <div class="pdf-watermark" id="qnaPdfWatermark"></div>
+                        <div class="pdf-q-list">${listHtml}</div>
                     </div>
                     ${buildPdfPageFooterHtml()}
-                </div>`);
-            });
+                </div>`;
+            container.style.display = 'block';
 
-            const safeName = title.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-            const filename = `${safeName}_qna_${opts.lang}.pdf`;
-
-            const libsReady = await ensurePdfLibsLoaded();
-            if (!libsReady) {
-                showToast('Could not load the PDF tools — check your connection and try again', 'error');
-                return;
+            // Tile the watermark roughly once per printed page down the
+            // whole continuous question flow (cover page intentionally
+            // has none) — measured against the real rendered height now
+            // that content isn't manually split into fixed-size pages.
+            const docBody = container.querySelector('.pdf-content-page .pdf-doc-body');
+            const wmContainer = document.getElementById('qnaPdfWatermark');
+            const totalHeight = docBody.scrollHeight;
+            const tileEvery = 1050;
+            let wmHtml = '';
+            for (let y = 480; y < totalHeight; y += tileEvery) {
+                wmHtml += `<span style="top:${y}px;">DEKA SIR CLASSES</span>`;
             }
-            // Let web fonts finish loading before rasterizing — otherwise
-            // Assamese text can get captured mid-swap from its fallback
-            // glyphs to Noto Sans Bengali.
-            try { await document.fonts.ready; } catch (_) {}
+            wmContainer.innerHTML = wmHtml;
 
-            showToast(`Rendering ${pages.length} page${pages.length === 1 ? '' : 's'}...`, 'info');
-            try {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF({ unit: 'px', format: [794, 1123], hotfixes: ['px_scaling'] });
-                const pageEls = Array.from(container.querySelectorAll('.pdf-page'));
-                for (let i = 0; i < pageEls.length; i++) {
-                    const canvas = await html2canvas(pageEls[i], { scale: 2, useCORS: true, backgroundColor: '#fffdf7' });
-                    const imgData = canvas.toDataURL('image/jpeg', 0.92);
-                    if (i > 0) doc.addPage([794, 1123], 'p');
-                    doc.addImage(imgData, 'JPEG', 0, 0, 794, 1123);
-                }
-                doc.save(filename);
-                showToast('✅ PDF downloaded!', 'success');
-            } catch (err) {
-                console.error(err);
-                showToast('PDF generation failed: ' + (err.message || err), 'error');
-            }
-        }
+            const safeName = (title.replace(/[^a-z0-9]+/gi, '_').toLowerCase() || 'question_paper') + '_qna_' + opts.lang;
+            document.title = safeName;
 
-        // Both scripts are plain (non-async/defer) <script src> tags near
-        // the top of <head>, so by the time any of this runs they're
-        // normally already loaded — this poll is just a safety net for a
-        // slow connection rather than the primary loading mechanism.
-        async function ensurePdfLibsLoaded() {
-            const start = Date.now();
-            while ((!window.jspdf || !window.html2canvas) && Date.now() - start < 8000) {
-                await new Promise(r => setTimeout(r, 100));
-            }
-            return !!(window.jspdf && window.html2canvas);
+            const restore = () => {
+                document.title = ORIGINAL_QNA_PDF_DOCUMENT_TITLE;
+                container.style.display = 'none';
+                container.innerHTML = '';
+                window.removeEventListener('afterprint', restore);
+            };
+            window.addEventListener('afterprint', restore);
+
+            // A brief delay lets the browser finish laying out what was
+            // just inserted (the watermark tiling above included) before
+            // the print engine measures pages for pagination.
+            setTimeout(() => { window.print(); }, 80);
         }
     </script>
 </body>
