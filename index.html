@@ -4144,144 +4144,7 @@
             max-width: min(1200px, 96vw) !important;
             margin: 0 auto !important;
         }
-        /* ================================================================
-           Q&A -> PDF export (print-based). This whole area is invisible
-           in the normal app UI and only shown while window.print() is
-           running — the browser's own print engine handles pagination
-           and font rendering, including Assamese (via the Noto Sans
-           Bengali web font above), far more reliably than trying to hand-
-           embed a font into jsPDF, and produces a small, text-searchable,
-           native PDF instead of one big rasterized image per page (which
-           is what made files enormous, made "Download" take minutes with
-           no visible progress since the whole render happened silently
-           before anything was handed to the browser, and had no per-page
-           save prompt at all — the file only appeared, all at once, once
-           html2canvas+jsPDF finished entirely).
-
-           This used to be built as explicit, fixed-size A4 boxes
-           (794x1123px) manually paginated in JS and then rasterized —
-           that measurement pass is why questions occasionally got cut
-           mid-block: openPdfOptionsForTest's own bug (see there) could
-           leave a question's height mismeasured against a stale/partial
-           layout. Printing real flowing HTML with page-break-inside:avoid
-           on each question block (see .pdf-q-block below) hands
-           pagination to the browser's print engine instead, which
-           doesn't have that failure mode. The one thing to watch here is
-           that this is a *repeat* of a design once tried and abandoned
-           (see version history) over trailing-blank-page bugs — those
-           came from a one-long-page-break-after chain combined with a
-           position:fixed footer; the difference this time is every
-           question block still gets its own explicit page-break-inside:
-           avoid (unchanged from before) and the header/footer are BOTH
-           fixed (not just the footer), which is the layout the working
-           reference this was rebuilt from actually uses. See
-           printQnaPdf() in the script below, and the "Save as PDF"
-           step happens in the browser's own native print dialog, which
-           is what puts the finished file in the device's normal
-           Downloads location with the browser's own progress UI —
-           nothing here downloads anything on its own.
-           ================================================================ */
-        @page { size: A4; margin: 12mm; }
-        #qnaPdfPrintArea { display: none; background: #fff; color: #1c1a15; }
-        #qnaPdfPrintArea .pdf-page {
-            background: #fffdf7; position: relative; box-sizing: border-box;
-        }
-        #qnaPdfPrintArea .pdf-cover-page { padding: 48px 50px 0; display: flex; flex-direction: column; min-height: 700px; }
-        #qnaPdfPrintArea .pdf-cover-badge-wrap { display: flex; justify-content: center; margin-bottom: 14px; }
-        #qnaPdfPrintArea .pdf-cover-badge {
-            width: 150px; height: 150px; border-radius: 50%; border: 5px solid #101d33; background: #fff;
-            display: flex; align-items: center; justify-content: center; overflow: hidden; flex: 0 0 auto;
-        }
-        #qnaPdfPrintArea .pdf-cover-badge img { width: 100%; height: 100%; object-fit: contain; }
-        #qnaPdfPrintArea .pdf-cover-body { flex: 1 1 auto; text-align: center; }
-        #qnaPdfPrintArea .pdf-cover-estd { font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: #5b5646; }
-        #qnaPdfPrintArea .pdf-cover-brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 30px; margin: 6px 0 22px; color: #e0562f; }
-        #qnaPdfPrintArea .pdf-cover-rule { width: 140px; height: 3px; background: #c9a227; margin: 0 auto 24px; }
-        #qnaPdfPrintArea .pdf-cover-title { font-family: 'Noto Serif', serif; font-weight: 700; font-size: 28px; color: #101d33; line-height: 1.35; max-width: 600px; margin: 0 auto; }
-        #qnaPdfPrintArea .pdf-cover-title.as { font-family: 'Noto Sans Bengali', sans-serif; }
-        #qnaPdfPrintArea .pdf-cover-meta { margin-top: 20px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #5b5646; }
-        #qnaPdfPrintArea .pdf-cover-bottom-band { margin-top: auto; padding: 20px 50px 30px; display: flex; align-items: center; justify-content: center; gap: 12px; }
-        #qnaPdfPrintArea .pdf-mini-badge {
-            width: 34px; height: 34px; border-radius: 50%; background: #fff; border: 1.5px solid #dcd4bc;
-            display: flex; align-items: center; justify-content: center; overflow: hidden; flex: 0 0 auto;
-        }
-        #qnaPdfPrintArea .pdf-mini-badge img { width: 100%; height: 100%; object-fit: contain; }
-        #qnaPdfPrintArea .pdf-cover-bottom-text { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 13px; color: #101d33; }
-        /* Compact repeating header on every content page (not the cover) */
-        /* Fixed (not in-flow) on purpose: with one continuous content
-           flow instead of manually-built per-page divs, this is what
-           makes the header/footer repeat on every printed page — a
-           standard CSS-print technique. Positioned relative to each
-           physical page during printing regardless of DOM nesting. */
-        #qnaPdfPrintArea .pdf-page-header {
-            display: flex; align-items: center; gap: 10px;
-            padding: 12px 40px; border-bottom: 1px solid #dcd4bc; background: #fffdf7;
-        }
-        #qnaPdfPrintArea .pdf-page-header .pdf-mini-badge { width: 30px; height: 30px; }
-        #qnaPdfPrintArea .pdf-page-header-text { flex: 1; min-width: 0; }
-        #qnaPdfPrintArea .pdf-page-header-brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 12.5px; color: #e0562f; }
-        #qnaPdfPrintArea .pdf-page-header-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 10.5px; color: #5b5646; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        #qnaPdfPrintArea .pdf-doc-body { position: relative; padding: 74px 50px 62px; }
-        #qnaPdfPrintArea .pdf-content-footer {
-            display: flex; align-items: center; justify-content: center; gap: 10px;
-            padding: 10px 40px; border-top: 1px solid #dcd4bc; background: #fffdf7;
-            font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; color: #101d33;
-        }
-        #qnaPdfPrintArea .pdf-watermark { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
-        #qnaPdfPrintArea .pdf-watermark span {
-            position: absolute; left: 0; right: 0; text-align: center;
-            font-family: 'Inter', sans-serif; font-weight: 800; font-size: 44px; color: #101d33; opacity: .06;
-            transform: rotate(-30deg); white-space: nowrap; display: block;
-        }
-        #qnaPdfPrintArea .pdf-q-list { position: relative; z-index: 1; }
-        #qnaPdfPrintArea .pdf-q-block { margin-bottom: 22px; page-break-inside: avoid; }
-        #qnaPdfPrintArea .pdf-q-top { display: flex; gap: 14px; }
-        #qnaPdfPrintArea .pdf-q-num {
-            flex: 0 0 30px; height: 30px; border-radius: 50%; border: 1.5px solid #101d33;
-            display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace;
-            font-weight: 600; font-size: 13px; color: #101d33;
-        }
-        #qnaPdfPrintArea .pdf-q-body { flex: 1; min-width: 0; }
-        #qnaPdfPrintArea .pdf-q-text { font-size: 15.5px; font-weight: 600; color: #1c1a15; line-height: 1.5; margin-bottom: 9px; }
-        #qnaPdfPrintArea .pdf-q-text.as, #qnaPdfPrintArea .pdf-q-text-as { font-family: 'Noto Sans Bengali', sans-serif; font-weight: 500; }
-        #qnaPdfPrintArea .pdf-q-img { width: auto; height: 130px; max-width: 220px; object-fit: contain; display: block; margin: 4px 0 12px; border: 1px solid #dcd4bc; border-radius: 4px; background: #fff; }
-        #qnaPdfPrintArea .pdf-q-options { list-style: none; margin: 0 0 4px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
-        #qnaPdfPrintArea .pdf-q-opt { display: flex; gap: 9px; font-size: 13.5px; color: #1c1a15; align-items: flex-start; }
-        #qnaPdfPrintArea .pdf-q-opt.as, #qnaPdfPrintArea .pdf-q-opt-as { font-family: 'Noto Sans Bengali', sans-serif; }
-        #qnaPdfPrintArea .pdf-opt-tag {
-            flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 11px;
-            width: 20px; height: 20px; border-radius: 5px; border: 1px solid #dcd4bc;
-            display: flex; align-items: center; justify-content: center; color: #5b5646;
-        }
-        #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-tag { background: #2f6b45; border-color: #2f6b45; color: #fff; }
-        #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 600; }
-        #qnaPdfPrintArea .pdf-answer-box {
-            margin-top: 4px; font-size: 13.5px; color: #2f6b45; font-weight: 600; line-height: 1.45;
-        }
-        #qnaPdfPrintArea .pdf-answer-box.as { font-family: 'Noto Sans Bengali', sans-serif; }
-        #qnaPdfPrintArea .pdf-q-hint {
-            margin-top: 9px; font-size: 13.5px; color: #1c1a15; font-weight: 600; background: #fff8e6; border-left: 4px solid #c9a227;
-            padding: 8px 13px; border-radius: 0 6px 6px 0; line-height: 1.45;
-        }
-        #qnaPdfPrintArea .pdf-q-hint.as { font-family: 'Noto Sans Bengali', sans-serif; }
-        #qnaPdfPrintArea .pdf-rule-line { display: none; }
-        @media print {
-            /* #qnaPdfPrintArea is parsed as the first child of <body>
-               (a stray flow element found while still "in head" gets
-               relocated there per HTML parsing rules) — hiding every
-               other direct child of body leaves only this to print,
-               without depending on any element being invisible by
-               default the rest of the time. */
-            body > *:not(#qnaPdfPrintArea) { display: none !important; }
-            #qnaPdfPrintArea { display: block !important; }
-            #qnaPdfPrintArea .pdf-page { page-break-after: always; }
-            #qnaPdfPrintArea .pdf-page:last-child { page-break-after: auto; }
-            #qnaPdfPrintArea .pdf-cover-page { height: 273mm; min-height: 0; }
-            #qnaPdfPrintArea .pdf-page-header { position: fixed; top: 0; left: 0; right: 0; z-index: 2; }
-            #qnaPdfPrintArea .pdf-content-footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; }
-        }
     </style>
-    <div id="qnaPdfPrintArea"></div>
 </head>
 <body>
 
@@ -15233,12 +15096,13 @@
         // script out of the box — Assamese needed a font manually
         // embedded via addFont(), which turned out unreliable (broken/
         // garbled Assamese, and some English text going missing too on
-        // the same page). This version instead renders real HTML into
-        // #qnaPdfPrintArea (hidden except during printing — see the CSS
-        // near the top of the file) and calls window.print(), so the
+        // the same page). This version instead renders real HTML into a
+        // separate, hidden-iframe document (see QNA_PDF_DOCUMENT_CSS and
+        // printQnaPdf below) and calls that iframe's own print(), so the
         // browser's own print engine does the layout, pagination, and
         // font rendering — the same real Noto Sans Bengali web font the
-        // rest of the page already uses, not a hand-embedded subset.
+        // rest of the page already uses, not a hand-embedded subset —
+        // entirely isolated from this app page's own DOM/CSS.
         // ================================================================
 
         function pdfEsc(s) {
@@ -15446,7 +15310,99 @@
         // puts the result in their device's normal Downloads location
         // with the browser's own native progress/UI — nothing here
         // triggers a download on its own.
-        const ORIGINAL_QNA_PDF_DOCUMENT_TITLE = document.title;
+        // Everything the printed document needs, self-contained — no
+        // "#qnaPdfPrintArea" prefix since this becomes its own standalone
+        // HTML document (see printQnaPdf below), and no @media print
+        // guard needed either since that whole document exists only to
+        // be printed. This used to live as a hidden div in the MAIN page
+        // and print via the main window's own window.print(), hiding
+        // everything else in the app with a "body > *:not(#id)" CSS rule
+        // — that depended on this div ending up as a direct child of
+        // <body> (true in the browsers this was tested in, but not
+        // guaranteed) and on the app's own body being a plain block
+        // (it's actually `display:flex;flex-direction:column`, which can
+        // squash/clip a flex-item child in ways a plain print stylesheet
+        // never has to deal with). Some Android devices printed 2 blank
+        // pages under that setup. A completely separate document in a
+        // hidden iframe (see printQnaPdf) can't be affected by any of
+        // the host page's own layout, CSS, or DOM structure at all.
+        const QNA_PDF_DOCUMENT_CSS = `
+            @page { size: A4; margin: 12mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; background: #fff; color: #1c1a15; font-family: 'Inter', sans-serif; }
+            .pdf-page { background: #fffdf7; position: relative; page-break-after: always; }
+            .pdf-page:last-child { page-break-after: auto; }
+            .pdf-cover-page { padding: 48px 50px 0; display: flex; flex-direction: column; height: 273mm; }
+            .pdf-cover-badge-wrap { display: flex; justify-content: center; margin-bottom: 14px; }
+            .pdf-cover-badge {
+                width: 150px; height: 150px; border-radius: 50%; border: 5px solid #101d33; background: #fff;
+                display: flex; align-items: center; justify-content: center; overflow: hidden; flex: 0 0 auto;
+            }
+            .pdf-cover-badge img { width: 100%; height: 100%; object-fit: contain; }
+            .pdf-cover-body { flex: 1 1 auto; text-align: center; }
+            .pdf-cover-estd { font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: #5b5646; }
+            .pdf-cover-brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 30px; margin: 6px 0 22px; color: #e0562f; }
+            .pdf-cover-rule { width: 140px; height: 3px; background: #c9a227; margin: 0 auto 24px; }
+            .pdf-cover-title { font-family: 'Noto Serif', serif; font-weight: 700; font-size: 28px; color: #101d33; line-height: 1.35; max-width: 600px; margin: 0 auto; }
+            .pdf-cover-title.as { font-family: 'Noto Sans Bengali', sans-serif; }
+            .pdf-cover-meta { margin-top: 20px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #5b5646; }
+            .pdf-cover-bottom-band { margin-top: auto; padding: 20px 50px 30px; display: flex; align-items: center; justify-content: center; gap: 12px; }
+            .pdf-mini-badge {
+                width: 34px; height: 34px; border-radius: 50%; background: #fff; border: 1.5px solid #dcd4bc;
+                display: flex; align-items: center; justify-content: center; overflow: hidden; flex: 0 0 auto;
+            }
+            .pdf-mini-badge img { width: 100%; height: 100%; object-fit: contain; }
+            .pdf-cover-bottom-text { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 13px; color: #101d33; }
+            /* Fixed (not in-flow) on purpose: with one continuous content
+               flow instead of manually-built per-page divs, this is what
+               makes the header/footer repeat on every printed page — a
+               standard CSS-print technique, positioned relative to each
+               physical page regardless of DOM nesting. */
+            .pdf-page-header { display: flex; align-items: center; gap: 10px; padding: 12px 40px; border-bottom: 1px solid #dcd4bc; background: #fffdf7; position: fixed; top: 0; left: 0; right: 0; z-index: 2; }
+            .pdf-page-header .pdf-mini-badge { width: 30px; height: 30px; }
+            .pdf-page-header-text { flex: 1; min-width: 0; }
+            .pdf-page-header-brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 12.5px; color: #e0562f; }
+            .pdf-page-header-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 10.5px; color: #5b5646; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .pdf-doc-body { position: relative; padding: 74px 50px 62px; }
+            .pdf-content-footer { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 40px; border-top: 1px solid #dcd4bc; background: #fffdf7; font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; color: #101d33; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; }
+            .pdf-watermark { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+            .pdf-watermark span {
+                position: absolute; left: 0; right: 0; text-align: center;
+                font-family: 'Inter', sans-serif; font-weight: 800; font-size: 44px; color: #101d33; opacity: .06;
+                transform: rotate(-30deg); white-space: nowrap; display: block;
+            }
+            .pdf-q-list { position: relative; z-index: 1; }
+            .pdf-q-block { margin-bottom: 22px; page-break-inside: avoid; }
+            .pdf-q-top { display: flex; gap: 14px; }
+            .pdf-q-num {
+                flex: 0 0 30px; height: 30px; border-radius: 50%; border: 1.5px solid #101d33;
+                display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace;
+                font-weight: 600; font-size: 13px; color: #101d33;
+            }
+            .pdf-q-body { flex: 1; min-width: 0; }
+            .pdf-q-text { font-size: 15.5px; font-weight: 600; color: #1c1a15; line-height: 1.5; margin-bottom: 9px; }
+            .pdf-q-text.as, .pdf-q-text-as { font-family: 'Noto Sans Bengali', sans-serif; font-weight: 500; }
+            .pdf-q-img { width: auto; height: 130px; max-width: 220px; object-fit: contain; display: block; margin: 4px 0 12px; border: 1px solid #dcd4bc; border-radius: 4px; background: #fff; }
+            .pdf-q-options { list-style: none; margin: 0 0 4px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+            .pdf-q-opt { display: flex; gap: 9px; font-size: 13.5px; color: #1c1a15; align-items: flex-start; }
+            .pdf-q-opt.as, .pdf-q-opt-as { font-family: 'Noto Sans Bengali', sans-serif; }
+            .pdf-opt-tag {
+                flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 11px;
+                width: 20px; height: 20px; border-radius: 5px; border: 1px solid #dcd4bc;
+                display: flex; align-items: center; justify-content: center; color: #5b5646;
+            }
+            .pdf-q-opt.correct .pdf-opt-tag { background: #2f6b45; border-color: #2f6b45; color: #fff; }
+            .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 600; }
+            .pdf-answer-box { margin-top: 4px; font-size: 13.5px; color: #2f6b45; font-weight: 600; line-height: 1.45; }
+            .pdf-answer-box.as { font-family: 'Noto Sans Bengali', sans-serif; }
+            .pdf-q-hint {
+                margin-top: 9px; font-size: 13.5px; color: #1c1a15; font-weight: 600; background: #fff8e6; border-left: 4px solid #c9a227;
+                padding: 8px 13px; border-radius: 0 6px 6px 0; line-height: 1.45;
+            }
+            .pdf-q-hint.as { font-family: 'Noto Sans Bengali', sans-serif; }
+            .pdf-rule-line { display: none; }
+        `;
+
         function printQnaPdf(source, opts) {
             if (!source || !source.data) return;
             const isTest = source.type === 'test';
@@ -15468,13 +15424,12 @@
             }
 
             const title = source.data.title || (isTest ? 'Mock Test' : 'Study Material');
-            const container = document.getElementById('qnaPdfPrintArea');
 
             let listHtml = '';
             questions.forEach((q, i) => { listHtml += buildPdfQBlockHtml(q, i, isTest, opts); });
 
-            container.innerHTML = buildPdfCoverPageHtml(title, questions.length) +
-                `<div class="pdf-page pdf-content-page">
+            const coverHtml = buildPdfCoverPageHtml(title, questions.length);
+            const contentHtml = `<div class="pdf-page pdf-content-page">
                     ${buildPdfPageHeaderHtml(title)}
                     <div class="pdf-doc-body">
                         <div class="pdf-watermark" id="qnaPdfWatermark"></div>
@@ -15482,51 +15437,73 @@
                     </div>
                     ${buildPdfPageFooterHtml()}
                 </div>`;
-            container.style.display = 'block';
 
-            // Tile the watermark roughly once per printed page down the
-            // whole continuous question flow (cover page intentionally
-            // has none) — measured against the real rendered height now
-            // that content isn't manually split into fixed-size pages.
-            const docBody = container.querySelector('.pdf-content-page .pdf-doc-body');
-            const wmContainer = document.getElementById('qnaPdfWatermark');
-            const totalHeight = docBody.scrollHeight;
-            const tileEvery = 1050;
-            let wmHtml = '';
-            for (let y = 480; y < totalHeight; y += tileEvery) {
-                wmHtml += `<span style="top:${y}px;">DEKA SIR CLASSES</span>`;
-            }
-            wmContainer.innerHTML = wmHtml;
-
-            // The browser's Save-as-PDF step suggests document.title as
-            // the filename, so this is the actual saved file's name —
-            // just the mock's own title, not a slugified/suffixed version
-            // of it. Only strip characters a filesystem would reject.
+            // The browser's Save-as-PDF step suggests the document's
+            // <title> as the filename, so this is the actual saved
+            // file's name — just the mock's own title, not a slugified/
+            // suffixed version of it. Only strip characters a filesystem
+            // would reject.
             const safeName = title.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
-            document.title = safeName;
 
-            const restore = () => {
-                document.title = ORIGINAL_QNA_PDF_DOCUMENT_TITLE;
-                container.style.display = 'none';
-                container.innerHTML = '';
-                window.removeEventListener('afterprint', restore);
+            // A hidden iframe with its OWN document, rather than a div in
+            // this page printed via this page's own window.print(). That
+            // isolates the print entirely from the app's own layout (the
+            // app's <body> is a flex column, which can squash/clip a
+            // child in ways that broke printing on some Android devices)
+            // and from ever needing to hide the rest of the app's DOM at
+            // print time at all.
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+            document.body.appendChild(iframe);
+            const idoc = iframe.contentDocument;
+            idoc.open();
+            idoc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${pdfEsc(safeName)}</title>
+                <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Noto+Serif:wght@600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
+                <style>${QNA_PDF_DOCUMENT_CSS}</style></head>
+                <body>${coverHtml}${contentHtml}</body></html>`);
+            idoc.close();
+
+            const cleanup = () => { if (iframe.parentNode) iframe.remove(); };
+
+            iframe.onload = () => {
+                // Tile the watermark roughly once per printed page down
+                // the whole continuous question flow (cover page
+                // intentionally has none) — measured against the real
+                // rendered height now that content isn't manually split
+                // into fixed-size pages.
+                const docBody = idoc.querySelector('.pdf-content-page .pdf-doc-body');
+                const wmContainer = idoc.getElementById('qnaPdfWatermark');
+                const totalHeight = docBody.scrollHeight;
+                const tileEvery = 1050;
+                let wmHtml = '';
+                for (let y = 480; y < totalHeight; y += tileEvery) {
+                    wmHtml += `<span style="top:${y}px;">DEKA SIR CLASSES</span>`;
+                }
+                wmContainer.innerHTML = wmHtml;
+
+                const iwin = iframe.contentWindow;
+                iwin.addEventListener('afterprint', cleanup);
+                // Force a real layout + paint of everything just written
+                // (450+ questions' worth of HTML, plus the watermark
+                // tiling above) before asking the iframe to print —
+                // reading a layout property forces a synchronous reflow,
+                // and the requestAnimationFrame + delay pair after it
+                // waits for a real paint too. Printing before that paint
+                // happened is what produced near-empty pages on some
+                // Android devices.
+                void idoc.body.offsetHeight;
+                iwin.requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        iwin.focus();
+                        iwin.print();
+                        // Some browsers never fire afterprint on a
+                        // subframe reliably — clean up regardless once
+                        // enough time has passed for the print UI to
+                        // have opened.
+                        setTimeout(cleanup, 60000);
+                    }, 150);
+                });
             };
-            window.addEventListener('afterprint', restore);
-
-            // Force the browser to actually lay out and paint everything
-            // just inserted (450+ questions' worth of HTML, plus the
-            // watermark tiling above) before asking it to print — reading
-            // a layout property like offsetHeight forces a synchronous
-            // reflow, and the requestAnimationFrame + setTimeout pair
-            // after it waits for a real paint to happen too. Printing
-            // against a layout that hasn't been painted yet is what
-            // produced near-empty pages on some Android devices: the
-            // print snapshot was taken before the content was actually
-            // there to capture.
-            void container.offsetHeight;
-            requestAnimationFrame(() => {
-                setTimeout(() => { window.print(); }, 150);
-            });
         }
     </script>
 </body>
