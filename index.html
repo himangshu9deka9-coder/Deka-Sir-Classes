@@ -4181,7 +4181,7 @@
            Downloads location with the browser's own progress UI —
            nothing here downloads anything on its own.
            ================================================================ */
-        @page { size: A4; margin: 14mm 0; }
+        @page { size: A4; margin: 12mm; }
         #qnaPdfPrintArea { display: none; background: #fff; color: #1c1a15; }
         #qnaPdfPrintArea .pdf-page {
             background: #fffdf7; position: relative; box-sizing: border-box;
@@ -4256,8 +4256,7 @@
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-tag { background: #2f6b45; border-color: #2f6b45; color: #fff; }
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 600; }
         #qnaPdfPrintArea .pdf-answer-box {
-            margin-top: 4px; font-size: 13.5px; color: #2f6b45; font-weight: 600; background: #e6faeb;
-            border: 1px solid #6ec391; padding: 9px 13px; border-radius: 6px; line-height: 1.45;
+            margin-top: 4px; font-size: 13.5px; color: #2f6b45; font-weight: 600; line-height: 1.45;
         }
         #qnaPdfPrintArea .pdf-answer-box.as { font-family: 'Noto Sans Bengali', sans-serif; }
         #qnaPdfPrintArea .pdf-q-hint {
@@ -15318,7 +15317,7 @@
                 }
                 if (opts.hints && (q.hint_en || q.hint_as)) {
                     html += pdfLangVariants(opts.lang, q.hint_en, q.hint_as)
-                        .map(v => `<div class="pdf-q-hint${v.as ? ' as' : ''}">Hint: ${pdfEsc(v.text)}</div>`)
+                        .map(v => `<div class="pdf-q-hint${v.as ? ' as' : ''}">${pdfEsc(v.text)}</div>`)
                         .join('');
                 }
             } else {
@@ -15454,6 +15453,20 @@
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
             if (!questions.length) { showToast('Nothing to export', 'error'); return; }
 
+            // A PDF "download" from window.print() is really the person
+            // choosing Save-as-PDF inside their browser's own print UI —
+            // there's no such UI when the site is opened from an iOS
+            // "Add to Home Screen" icon (standalone display mode); print
+            // there opens some in-app preview with no way out to Files/
+            // Downloads. Rather than let someone tap Download and land on
+            // a dead end, catch that case up front and tell them the one
+            // thing that actually fixes it.
+            const isStandalonePwa = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+            if (isStandalonePwa) {
+                showToast('To download this PDF, open the site in Safari or Chrome (not from the home screen icon)', 'error');
+                return;
+            }
+
             const title = source.data.title || (isTest ? 'Mock Test' : 'Study Material');
             const container = document.getElementById('qnaPdfPrintArea');
 
@@ -15485,7 +15498,11 @@
             }
             wmContainer.innerHTML = wmHtml;
 
-            const safeName = (title.replace(/[^a-z0-9]+/gi, '_').toLowerCase() || 'question_paper') + '_qna_' + opts.lang;
+            // The browser's Save-as-PDF step suggests document.title as
+            // the filename, so this is the actual saved file's name —
+            // just the mock's own title, not a slugified/suffixed version
+            // of it. Only strip characters a filesystem would reject.
+            const safeName = title.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
             document.title = safeName;
 
             const restore = () => {
@@ -15496,10 +15513,20 @@
             };
             window.addEventListener('afterprint', restore);
 
-            // A brief delay lets the browser finish laying out what was
-            // just inserted (the watermark tiling above included) before
-            // the print engine measures pages for pagination.
-            setTimeout(() => { window.print(); }, 80);
+            // Force the browser to actually lay out and paint everything
+            // just inserted (450+ questions' worth of HTML, plus the
+            // watermark tiling above) before asking it to print — reading
+            // a layout property like offsetHeight forces a synchronous
+            // reflow, and the requestAnimationFrame + setTimeout pair
+            // after it waits for a real paint to happen too. Printing
+            // against a layout that hasn't been painted yet is what
+            // produced near-empty pages on some Android devices: the
+            // print snapshot was taken before the content was actually
+            // there to capture.
+            void container.offsetHeight;
+            requestAnimationFrame(() => {
+                setTimeout(() => { window.print(); }, 150);
+            });
         }
     </script>
 </body>
