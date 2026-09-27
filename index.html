@@ -15353,18 +15353,17 @@
             }
             .pdf-mini-badge img { width: 100%; height: 100%; object-fit: contain; }
             .pdf-cover-bottom-text { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 13px; color: #101d33; }
-            /* Fixed (not in-flow) on purpose: with one continuous content
-               flow instead of manually-built per-page divs, this is what
-               makes the header/footer repeat on every printed page — a
-               standard CSS-print technique, positioned relative to each
-               physical page regardless of DOM nesting. */
-            .pdf-page-header { display: flex; align-items: center; gap: 10px; padding: 12px 40px; border-bottom: 1px solid #dcd4bc; background: #fffdf7; position: fixed; top: 0; left: 0; right: 0; z-index: 2; }
+            /* Plain in-flow block now, not repeated per printed page — see
+               printQnaPdf's comment on why position:fixed was dropped. */
+            .pdf-page-header { display: flex; align-items: center; gap: 10px; padding: 12px 40px; border-bottom: 1px solid #dcd4bc; background: #fffdf7; }
             .pdf-page-header .pdf-mini-badge { width: 30px; height: 30px; }
             .pdf-page-header-text { flex: 1; min-width: 0; }
             .pdf-page-header-brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 12.5px; color: #e0562f; }
             .pdf-page-header-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 10.5px; color: #5b5646; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .pdf-doc-body { position: relative; padding: 74px 50px 62px; }
-            .pdf-content-footer { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 40px; border-top: 1px solid #dcd4bc; background: #fffdf7; font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; color: #101d33; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; }
+            .pdf-doc-body { position: relative; padding: 20px 50px 24px; }
+            /* Plain in-flow block, once, after the last question — not
+               repeated per printed page. */
+            .pdf-content-footer { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 40px; border-top: 1px solid #dcd4bc; background: #fffdf7; font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; color: #101d33; }
             .pdf-watermark { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
             .pdf-watermark span {
                 position: absolute; left: 0; right: 0; text-align: center;
