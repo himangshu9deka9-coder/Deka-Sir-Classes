@@ -15481,96 +15481,153 @@
             await generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey);
         }
 
+        // Copies just the PDF page styles out of this page's own stylesheet
+        // (every rule scoped to #qnaPdfPrintArea) so the isolated render
+        // document below can reuse them without duplicating the CSS.
+        function collectQnaPdfCss() {
+            let css = '';
+            for (const sheet of document.styleSheets) {
+                let rules;
+                try { rules = sheet.cssRules; } catch (_) { continue; }
+                for (const r of rules) {
+                    if (r.selectorText && r.selectorText.includes('#qnaPdfPrintArea')) css += r.cssText + '\n';
+                }
+            }
+            return css;
+        }
+
+        function waitForImages(root, timeoutMs) {
+            const imgs = Array.from(root.querySelectorAll('img')).filter(img => !img.complete);
+            if (!imgs.length) return Promise.resolve();
+            return Promise.race([
+                Promise.all(imgs.map(img => new Promise(r => { img.onload = img.onerror = r; }))),
+                new Promise(r => setTimeout(r, timeoutMs))
+            ]);
+        }
+
         async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey) {
             const isTest = source.type === 'test';
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
             showToast('Preparing PDF...', 'info');
 
-            const container = document.getElementById('qnaPdfPrintArea');
-            container.innerHTML = buildPdfCoverPageHtml(title, questions.length);
-
-            // Measure exactly how much vertical room is left for
-            // questions once the header/footer/padding are accounted
-            // for, using a real (temporary) page rather than hardcoded
-            // numbers — stays correct even if the CSS above changes.
-            const probe = document.createElement('div');
-            probe.className = 'pdf-page pdf-content-page';
-            probe.innerHTML = buildPdfPageHeaderHtml(title) + '<div class="pdf-doc-body"></div>' + buildPdfPageFooterHtml();
-            container.appendChild(probe);
-            const maxListHeight = probe.querySelector('.pdf-doc-body').clientHeight;
-            const bodyContentWidth = probe.querySelector('.pdf-doc-body').clientWidth;
-            probe.remove();
-
-            // Off-DOM-flow measuring sandbox, same content width as the
-            // real page body so wrapping (and therefore height) matches.
-            const measure = document.createElement('div');
-            measure.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;width:${bodyContentWidth}px;`;
-            document.body.appendChild(measure);
-
-            const pages = [[]];
-            let currentHeight = 0;
-            questions.forEach((q, i) => {
-                const blockHtml = buildPdfQBlockHtml(q, i, isTest, opts);
-                measure.innerHTML = blockHtml;
-                // +22 accounts for .pdf-q-block's own margin-bottom, which
-                // offsetHeight on the block itself doesn't include.
-                const blockH = measure.firstElementChild.offsetHeight + 22;
-                if (currentHeight + blockH > maxListHeight && pages[pages.length - 1].length > 0) {
-                    pages.push([]);
-                    currentHeight = 0;
-                }
-                pages[pages.length - 1].push(blockHtml);
-                currentHeight += blockH;
-            });
-            measure.remove();
-
-            // Header only on the first content page, footer only on the
-            // last — not repeated on every page.
-            pages.forEach((blocks, pageIdx) => {
-                container.insertAdjacentHTML('beforeend', `<div class="pdf-page pdf-content-page">
-                    ${pageIdx === 0 ? buildPdfPageHeaderHtml(title) : ''}
-                    <div class="pdf-doc-body">
-                        <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
-                        <div class="pdf-q-list">${blocks.join('')}</div>
-                    </div>
-                    ${pageIdx === pages.length - 1 ? buildPdfPageFooterHtml() : ''}
-                </div>`);
-            });
-
             const libsReady = await ensurePdfLibsLoaded();
             if (!libsReady) {
                 showToast('Could not load the PDF tools — check your connection and try again', 'error');
-                container.innerHTML = '';
                 return;
             }
-            // Let web fonts finish loading before rasterizing — otherwise
-            // Assamese text can get captured mid-swap from its fallback
-            // glyphs to Noto Sans Bengali.
-            try { await document.fonts.ready; } catch (_) {}
+
+            // Everything is laid out and rendered inside a tiny, separate
+            // hidden document — ONE page at a time. html2canvas clones the
+            // entire document it is asked to render from, on every single
+            // call; doing that against the whole app page (plus all 46
+            // pages of PDF content sitting in it at once) is what made a
+            // 46-page PDF take ~5 minutes on Android and run iPhones out of
+            // memory. A near-empty document with a single page in it makes
+            // each clone almost free.
+            const iframe = document.createElement('iframe');
+            iframe.setAttribute('aria-hidden', 'true');
+            iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;pointer-events:none;';
+            document.body.appendChild(iframe);
 
             let blob;
             try {
+                const idoc = iframe.contentDocument;
+                idoc.open();
+                idoc.write('<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + collectQnaPdfCss() +
+                    '#qnaPdfPrintArea{position:static !important;opacity:1 !important;z-index:auto !important;}body{margin:0;background:#fff;}' +
+                    '</style></head><body><div id="qnaPdfPrintArea"></div></body></html>');
+                idoc.close();
+
+                const fontLink = idoc.createElement('link');
+                fontLink.rel = 'stylesheet';
+                fontLink.href = 'https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Noto+Serif:wght@600;700&family=JetBrains+Mono:wght@500;600&display=swap';
+                const fontLinkLoaded = new Promise(res => { fontLink.onload = res; fontLink.onerror = res; setTimeout(res, 6000); });
+                idoc.head.appendChild(fontLink);
+                await fontLinkLoaded;
+
+                const root = idoc.getElementById('qnaPdfPrintArea');
+
+                // Measure how much room a content page really has for
+                // questions. Padding is subtracted on purpose: clientWidth/
+                // clientHeight include it, and measuring blocks at the wider
+                // padded width made them wrap less than they do on the real
+                // page — heights came out too small, so questions overflowed
+                // the bottom of a page and got cut off mid-way.
+                root.innerHTML = '<div class="pdf-page pdf-content-page">' + buildPdfPageHeaderHtml(title) +
+                    '<div class="pdf-doc-body"></div>' + buildPdfPageFooterHtml() + '</div>';
+                const bodyEl = root.querySelector('.pdf-doc-body');
+                const cs = idoc.defaultView.getComputedStyle(bodyEl);
+                const contentW = bodyEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+                const maxListHeight = bodyEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 8;
+
+                const measure = idoc.createElement('div');
+                measure.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;left:0;top:0;width:${contentW}px;`;
+                root.appendChild(measure);
+                try { await idoc.fonts.ready; } catch (_) {}
+
+                const pages = [[]];
+                let currentHeight = 0;
+                questions.forEach((q, i) => {
+                    const blockHtml = buildPdfQBlockHtml(q, i, isTest, opts);
+                    measure.innerHTML = blockHtml;
+                    // +22 accounts for .pdf-q-block's own margin-bottom, which
+                    // offsetHeight on the block itself doesn't include.
+                    const blockH = measure.firstElementChild.offsetHeight + 22;
+                    if (currentHeight + blockH > maxListHeight && pages[pages.length - 1].length > 0) {
+                        pages.push([]);
+                        currentHeight = 0;
+                    }
+                    pages[pages.length - 1].push(blockHtml);
+                    currentHeight += blockH;
+                });
+
+                // Header only on the first content page, footer only on the
+                // last — not repeated on every page.
+                const pageHtmls = [buildPdfCoverPageHtml(title, questions.length)];
+                pages.forEach((blocks, pageIdx) => {
+                    pageHtmls.push(`<div class="pdf-page pdf-content-page">
+                        ${pageIdx === 0 ? buildPdfPageHeaderHtml(title) : ''}
+                        <div class="pdf-doc-body">
+                            <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
+                            <div class="pdf-q-list">${blocks.join('')}</div>
+                        </div>
+                        ${pageIdx === pages.length - 1 ? buildPdfPageFooterHtml() : ''}
+                    </div>`);
+                });
+
                 const { jsPDF } = window.jspdf;
-                const doc = new jsPDF({ unit: 'px', format: [794, 1123], hotfixes: ['px_scaling'] });
-                const pageEls = Array.from(container.querySelectorAll('.pdf-page'));
-                const total = pageEls.length;
+                const pdf = new jsPDF({ unit: 'px', format: [794, 1123], hotfixes: ['px_scaling'] });
+                // iPhones cap total canvas memory hard; a lower scale keeps
+                // every page comfortably under it.
+                const scale = isIOS() ? 1.2 : 1.5;
+                const total = pageHtmls.length;
                 for (let i = 0; i < total; i++) {
-                    if (i === 0 || (i + 1) % 8 === 0 || i === total - 1) {
+                    if (i === 0 || (i + 1) % 5 === 0 || i === total - 1) {
                         showToast(`Rendering page ${i + 1} of ${total}...`, 'info');
                     }
-                    const canvas = await html2canvas(pageEls[i], { scale: 1.5, useCORS: true, backgroundColor: '#fffdf7' });
-                    const imgData = canvas.toDataURL('image/jpeg', 0.85);
-                    if (i > 0) doc.addPage([794, 1123], 'p');
-                    doc.addImage(imgData, 'JPEG', 0, 0, 794, 1123);
+                    root.innerHTML = pageHtmls[i];
+                    await waitForImages(root, 5000);
+                    const canvas = await html2canvas(root.firstElementChild, {
+                        scale, useCORS: true, backgroundColor: '#fffdf7', logging: false,
+                        windowWidth: 794, windowHeight: 1123
+                    });
+                    const imgData = canvas.toDataURL('image/jpeg', 0.82);
+                    // Setting size to 0 is what actually frees a canvas's
+                    // memory on iOS Safari — without it, 46 of them pile up.
+                    canvas.width = 0; canvas.height = 0;
+                    if (i > 0) pdf.addPage([794, 1123], 'p');
+                    pdf.addImage(imgData, 'JPEG', 0, 0, 794, 1123, undefined, 'FAST');
+                    // Yield so the progress toast can actually paint.
+                    await new Promise(r => setTimeout(r, 0));
                 }
-                blob = doc.output('blob');
+                blob = pdf.output('blob');
             } catch (err) {
                 console.error(err);
                 showToast('PDF generation failed: ' + (err.message || err), 'error');
-                container.innerHTML = '';
                 return;
+            } finally {
+                iframe.remove();
             }
-            container.innerHTML = '';
 
             // Deliver to THIS device right away from the blob already in
             // hand — no reason to wait on a Drive round-trip just to get
