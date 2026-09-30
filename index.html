@@ -4164,9 +4164,17 @@
            ================================================================ */
         #qnaPdfPrintArea { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; background: #fff; color: #1c1a15; }
         #qnaPdfPrintArea .pdf-page {
-            background: #fffdf7; width: 794px; height: 1123px; position: relative;
-            display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box;
+            background: #fffdf7; width: 794px; min-height: 1123px; position: relative;
+            display: flex; flex-direction: column; box-sizing: border-box;
         }
+        /* Cover is exactly one page, always — its own content is short and
+           fixed, so this never clips anything (unlike a content page,
+           which the pagination below already sizes to fit; overflow:hidden
+           there would silently CROP the rare bilingual question whose
+           text+options+hint genuinely don't fit in one page's budget,
+           rather than letting it — and only it — make its own page a
+           little taller, which is what min-height above now allows). */
+        #qnaPdfPrintArea .pdf-cover-page { height: 1123px; }
         #qnaPdfPrintArea .pdf-cover-page { padding: 48px 50px 0; }
         #qnaPdfPrintArea .pdf-cover-badge-wrap { display: flex; justify-content: center; margin-bottom: 14px; }
         #qnaPdfPrintArea .pdf-cover-badge {
@@ -4239,6 +4247,14 @@
         }
         #qnaPdfPrintArea .pdf-q-hint.as { font-family: 'Noto Sans Bengali', sans-serif; }
         #qnaPdfPrintArea .pdf-rule-line { display: none; }
+        /* Answer-key section (admin-only "All options + answer key" mode) —
+           a compact grid at the end of the PDF instead of marking the
+           correct option on the question itself. */
+        #qnaPdfPrintArea .pdf-ak-heading { font-family: 'Noto Serif', serif; font-weight: 700; font-size: 19px; color: #101d33; margin-bottom: 16px; }
+        #qnaPdfPrintArea .pdf-ak-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 16px; }
+        #qnaPdfPrintArea .pdf-ak-item { font-size: 13px; color: #1c1a15; display: flex; gap: 4px; align-items: baseline; }
+        #qnaPdfPrintArea .pdf-ak-num { font-weight: 700; color: #101d33; flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; }
+        #qnaPdfPrintArea .pdf-ak-item.as { font-family: 'Noto Sans Bengali', sans-serif; }
     </style>
     <div id="qnaPdfPrintArea"></div>
 </head>
@@ -15244,10 +15260,15 @@
             if (isTest) {
                 const optsEn = q.options_en || q.options || [];
                 const optsAs = q.options_as || [];
-                if (opts.mode === 'options') {
+                if (opts.mode === 'options' || opts.mode === 'options-answerkey') {
+                    // options-answerkey deliberately never adds the
+                    // 'correct' class here — that's the whole point of
+                    // this mode (see the answer-key section appended
+                    // after all questions in generateAndDeliverQnaPdf).
+                    const markCorrect = opts.mode === 'options';
                     html += `<ul class="pdf-q-options">`;
                     optsEn.forEach((optEn, oi) => {
-                        const correct = oi === q.correctAnswer;
+                        const correct = markCorrect && oi === q.correctAnswer;
                         const optHtml = pdfLangVariants(opts.lang, optEn, optsAs[oi])
                             .map(v => `<span class="pdf-opt-txt${v.as ? ' as' : ''}">${pdfEsc(v.text)}</span>`)
                             .join('<br>');
@@ -15272,6 +15293,20 @@
             }
             html += `</div></div></div>`;
             return html;
+        }
+
+        // One row of the answer-key grid ("options-answerkey" mode) — the
+        // correct option's text, in whichever language(s) opts.lang asks
+        // for, joined with " / " rather than stacked on separate lines
+        // (unlike a question block's own bilingual options) since these
+        // rows need to stay short enough for a 4-column grid.
+        function buildPdfAnswerKeyItemHtml(idx, q, opts) {
+            const optsEn = q.options_en || q.options || [];
+            const optsAs = q.options_as || [];
+            const text = pdfLangVariants(opts.lang, optsEn[q.correctAnswer], optsAs[q.correctAnswer])
+                .map(v => pdfEsc(v.text)).join(' / ');
+            const isAs = opts.lang === 'as';
+            return `<div class="pdf-ak-item${isAs ? ' as' : ''}"><span class="pdf-ak-num">${idx + 1}.</span> ${text}</div>`;
         }
 
         function buildPdfPageHeaderHtml(title) {
@@ -15339,12 +15374,24 @@
             }
             let modeRow = '';
             if (isTest) {
+                // "All options + answer key" is admin-only: it's a blank
+                // exam-paper layout — every option shown, none marked as
+                // correct on the question itself — meant for handing to
+                // students to actually attempt on paper, with the answers
+                // listed together at the end instead. Showing that to a
+                // student here (as opposed to handing them the finished
+                // paper separately) would just be a confusing extra
+                // option with no use for them.
+                const answerKeyBtn = currentUser?.role === 'admin'
+                    ? `<button type="button" class="btn btn-sm btn-outline pdf-opt-mode ${defaults.defaultMode === 'options-answerkey' ? 'active' : ''}" data-val="options-answerkey" onclick="setPdfOptBtn(this)"><i class="fas fa-list-ol"></i> All options + answer key</button>`
+                    : '';
                 modeRow = `
                     <div class="form-group">
                         <label>Options</label>
-                        <div style="display:flex;gap:8px;">
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
                             <button type="button" class="btn btn-sm btn-outline pdf-opt-mode ${defaults.defaultMode === 'answer' ? 'active' : ''}" data-val="answer" onclick="setPdfOptBtn(this)"><i class="fas fa-circle-check"></i> Answer only</button>
                             <button type="button" class="btn btn-sm btn-outline pdf-opt-mode ${defaults.defaultMode === 'options' ? 'active' : ''}" data-val="options" onclick="setPdfOptBtn(this)"><i class="fas fa-list"></i> All options</button>
+                            ${answerKeyBtn}
                         </div>
                     </div>`;
             }
@@ -15610,6 +15657,13 @@
                     currentHeight += blockH;
                 });
 
+                // "All options + answer key" moves the correct-answer
+                // marking off the question itself and onto a compact grid
+                // appended after all the questions — so the footer belongs
+                // on the true last page (the last answer-key page), not
+                // the last question page, whenever that section exists.
+                const hasAnswerKey = isTest && opts.mode === 'options-answerkey';
+
                 // Header only on the first content page, footer only on the
                 // last — not repeated on every page.
                 const pageHtmls = [buildPdfCoverPageHtml(title, questions.length)];
@@ -15620,12 +15674,45 @@
                             <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
                             <div class="pdf-q-list">${blocks.join('')}</div>
                         </div>
-                        ${pageIdx === pages.length - 1 ? buildPdfPageFooterHtml() : ''}
+                        ${(pageIdx === pages.length - 1 && !hasAnswerKey) ? buildPdfPageFooterHtml() : ''}
                     </div>`);
                 });
 
+                if (hasAnswerKey) {
+                    const answerItems = questions.map((q, i) => buildPdfAnswerKeyItemHtml(i, q, opts));
+                    // Rows are uniform height (short "N. text" entries), so
+                    // — unlike question blocks — one row's real height
+                    // measured once is enough to chunk the rest by count,
+                    // rather than re-measuring after every single item.
+                    const rowProbe = idoc.createElement('div');
+                    rowProbe.style.cssText = `position:absolute;visibility:hidden;left:0;top:0;width:${contentW}px;`;
+                    rowProbe.innerHTML = `<div class="pdf-ak-grid">${answerItems.slice(0, 4).join('')}</div>`;
+                    root.appendChild(rowProbe);
+                    const rowHeight = rowProbe.firstElementChild.getBoundingClientRect().height + 10;
+                    rowProbe.remove();
+                    const cols = 4;
+                    const headingAllowance = 44;
+                    const rowsPerPage = Math.max(1, Math.floor((maxListHeight - headingAllowance) / rowHeight));
+                    const itemsPerPage = rowsPerPage * cols;
+                    const akPages = [];
+                    for (let i = 0; i < answerItems.length; i += itemsPerPage) {
+                        akPages.push(answerItems.slice(i, i + itemsPerPage));
+                    }
+                    akPages.forEach((items, pageIdx) => {
+                        pageHtmls.push(`<div class="pdf-page pdf-content-page">
+                            ${pageIdx === 0 ? buildPdfPageHeaderHtml(title) : ''}
+                            <div class="pdf-doc-body">
+                                <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
+                                ${pageIdx === 0 ? '<div class="pdf-ak-heading">Answer Key</div>' : ''}
+                                <div class="pdf-ak-grid">${items.join('')}</div>
+                            </div>
+                            ${pageIdx === akPages.length - 1 ? buildPdfPageFooterHtml() : ''}
+                        </div>`);
+                    });
+                }
+
                 const { jsPDF } = window.jspdf;
-                const pdf = new jsPDF({ unit: 'px', format: [794, 1123], hotfixes: ['px_scaling'] });
+                let pdf = null;
                 // iPhones cap total canvas memory hard; a lower scale keeps
                 // every page comfortably under it.
                 const scale = isIOS() ? 1.2 : 1.5;
@@ -15634,16 +15721,31 @@
                     showPdfProgress(`Rendering page ${i + 1} of ${total}...`);
                     root.innerHTML = pageHtmls[i];
                     await waitForImages(root, 5000);
-                    const canvas = await html2canvas(root.firstElementChild, {
+                    const pageEl = root.firstElementChild;
+                    // Almost always exactly 1123 (the pagination pass above
+                    // already packs questions to fit that). Only a single
+                    // question whose own text+options+hint — doubled up in
+                    // Bilingual mode — genuinely doesn't fit in one page's
+                    // budget ends up taller than that, and .pdf-page is
+                    // min-height, not a hard cap, so it's free to actually
+                    // BE taller here rather than getting silently cropped.
+                    // Every page's own real height drives its own PDF page
+                    // size, instead of assuming a fixed 1123 for all of them.
+                    const pageH = Math.ceil(pageEl.getBoundingClientRect().height);
+                    const canvas = await html2canvas(pageEl, {
                         scale, useCORS: true, backgroundColor: '#fffdf7', logging: false,
-                        windowWidth: 794, windowHeight: 1123
+                        windowWidth: 794, windowHeight: pageH
                     });
                     const imgData = canvas.toDataURL('image/jpeg', 0.82);
                     // Setting size to 0 is what actually frees a canvas's
                     // memory on iOS Safari — without it, 46 of them pile up.
                     canvas.width = 0; canvas.height = 0;
-                    if (i > 0) pdf.addPage([794, 1123], 'p');
-                    pdf.addImage(imgData, 'JPEG', 0, 0, 794, 1123, undefined, 'FAST');
+                    if (!pdf) {
+                        pdf = new jsPDF({ unit: 'px', format: [794, pageH], hotfixes: ['px_scaling'] });
+                    } else {
+                        pdf.addPage([794, pageH], 'p');
+                    }
+                    pdf.addImage(imgData, 'JPEG', 0, 0, 794, pageH, undefined, 'FAST');
                     // Yield so the progress toast can actually paint.
                     await new Promise(r => setTimeout(r, 0));
                 }
