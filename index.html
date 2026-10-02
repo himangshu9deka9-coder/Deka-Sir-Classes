@@ -644,6 +644,7 @@
             --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
             --gradient-main: linear-gradient(145deg, #0a0a1a 0%, #1a1a3e 50%, #0f172a 100%);
             --gradient-glow: linear-gradient(135deg, #f59e0b, #ec4899);
+            --surface-solid: #16182a;
             --radius-xl: 24px;
             --radius-lg: 16px;
             --radius-sm: 10px;
@@ -665,6 +666,7 @@
             --shadow-sm: 0 4px 20px rgba(0, 0, 0, 0.4);
             --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
             --gradient-main: linear-gradient(145deg, #0a0a1a 0%, #1a1a3e 50%, #0f172a 100%);
+            --surface-solid: #16182a;
         }
 
         body.light {
@@ -678,6 +680,7 @@
             --shadow-sm: 0 4px 20px rgba(0, 0, 0, 0.08);
             --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.12);
             --gradient-main: linear-gradient(145deg, #f0f2f5 0%, #e2e8f0 50%, #f1f5f9 100%);
+            --surface-solid: #ffffff;
         }
 
         * {
@@ -2647,8 +2650,21 @@
         .login-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0, 0, 0, 0.7);
-            backdrop-filter: blur(30px);
+            background: rgba(0, 0, 0, 0.78);
+            backdrop-filter: blur(18px);
+            /* iOS Safari has a well-known compositing bug where a
+               backdrop-filter element nested inside ANOTHER
+               backdrop-filter element — this overlay used to blur AND
+               the box inside it (below) also blurred — combined with a
+               transform/opacity entrance animation, can leave stale
+               GPU layers: the blur visually "stuck" after the overlay
+               closes, and/or touch hit-testing on inputs inside it
+               going stale until an extra tap. translateZ(0) forces one
+               stable composited layer up front instead of letting
+               WebKit repeatedly promote/demote layers through the
+               animation, which is what actually triggers it. */
+            transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
             display: none;
             align-items: center;
             justify-content: center;
@@ -2659,8 +2675,13 @@
             display: flex;
         }
         .login-box {
-            background: var(--glass-bg);
-            backdrop-filter: blur(24px);
+            /* No backdrop-filter here anymore — see the overlay's own
+               comment above. One blur layer (the overlay dimming
+               everything behind it) is enough; a second, nested one on
+               this box was the other half of that iOS compositing bug.
+               Solid-ish background instead keeps the same frosted-card
+               look without it. */
+            background: var(--surface-solid);
             border: 1px solid var(--glass-border);
             border-radius: var(--radius-xl);
             padding: 30px 24px;
@@ -2673,8 +2694,9 @@
             box-sizing: border-box;
             box-shadow: var(--shadow-lg);
             text-align: center;
-            animation: loginFloat 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-            transform: scale(0.9) translateY(20px);
+            animation: loginFloat 0.4s ease-out forwards;
+            transform: translateZ(0) scale(0.96);
+            -webkit-backface-visibility: hidden;
             opacity: 0;
         }
         .login-box::-webkit-scrollbar { width: 6px; }
@@ -2784,50 +2806,49 @@
         ============================================================ */
         .toast-container {
             position: fixed;
-            /* Moved from bottom to top — bottom placement sat too close
-               to on-screen keyboards and thumb-zone controls on mobile,
-               and got missed/ignored there. env(safe-area-inset-top)
-               keeps it clear of notches/status bars on devices that
-               have one; the plain 20px is the fallback for devices
-               without safe-area support. */
-            top: calc(20px + env(safe-area-inset-top, 0px));
-            left: 50%;
-            transform: translateX(-50%);
+            /* Anchored to the corner, not centered full-width — a run of
+               status messages (login checks, sync, PDF progress) used to
+               stack as near-full-width banners down the top of the
+               screen, covering everything underneath. A compact
+               corner stack never does that regardless of how many fire
+               in a row, and the cap in showToast() means even a burst of
+               them only ever shows the most recent few. */
+            top: calc(12px + env(safe-area-inset-top, 0px));
+            right: 12px;
+            left: auto;
+            transform: none;
             z-index: 9999;
             display: flex;
             flex-direction: column;
             gap: 8px;
-            align-items: center;
-            width: 90%;
-            max-width: 400px;
+            align-items: flex-end;
+            width: auto;
+            max-width: min(320px, calc(100vw - 24px));
             pointer-events: none;
         }
         .toast {
-            padding: 10px 18px;
-            border-radius: var(--radius-sm);
-            background: var(--glass-bg);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--glass-border);
-            color: var(--text-primary);
+            padding: 11px 16px;
+            border-radius: 14px;
+            background: rgba(22, 24, 34, 0.92);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #f1f5f9;
             font-weight: 500;
-            box-shadow: var(--shadow-lg);
-            animation: toastIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+            animation: toastIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
             display: flex;
             align-items: center;
-            gap: 10px;
-            font-size: 13px;
-            width: 100%;
+            gap: 9px;
+            font-size: 12.5px;
+            line-height: 1.4;
+            max-width: 100%;
             pointer-events: auto;
+            border-left: 3px solid var(--accent);
         }
-        .toast.success {
-            border-color: #059669;
-        }
-        .toast.error {
-            border-color: #dc2626;
-        }
-        .toast.info {
-            border-color: var(--accent);
-        }
+        .toast i { font-size: 13px; flex: 0 0 auto; }
+        .toast.success { border-left-color: #22c55e; }
+        .toast.error { border-left-color: #ef4444; }
+        .toast.info { border-left-color: #3b82f6; }
 
         /* Full-screen loader — reserved for genuinely blocking waits
            (right now: opening a large mock's questions) where there's
@@ -4226,23 +4247,23 @@
             font-weight: 600; font-size: 13px; color: #101d33;
         }
         #qnaPdfPrintArea .pdf-q-body { flex: 1; min-width: 0; }
-        #qnaPdfPrintArea .pdf-q-text { font-size: 15.5px; font-weight: 600; color: #1c1a15; line-height: 1.5; margin-bottom: 9px; }
+        #qnaPdfPrintArea .pdf-q-text { font-size: 17px; font-weight: 600; color: #1c1a15; line-height: 1.5; margin-bottom: 9px; }
         #qnaPdfPrintArea .pdf-q-text.as, #qnaPdfPrintArea .pdf-q-text-as { font-family: 'Noto Sans Bengali', sans-serif; font-weight: 500; }
-        #qnaPdfPrintArea .pdf-q-img { width: auto; height: 130px; max-width: 220px; object-fit: contain; display: block; margin: 4px 0 12px; border: 1px solid #dcd4bc; border-radius: 4px; background: #fff; }
+        #qnaPdfPrintArea .pdf-q-img { width: auto; height: 230px; max-width: 100%; object-fit: contain; display: block; margin: 4px 0 12px; border: 1px solid #dcd4bc; border-radius: 4px; background: #fff; }
         #qnaPdfPrintArea .pdf-q-options { list-style: none; margin: 0 0 4px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
-        #qnaPdfPrintArea .pdf-q-opt { display: flex; gap: 9px; font-size: 13.5px; color: #1c1a15; align-items: flex-start; }
+        #qnaPdfPrintArea .pdf-q-opt { display: flex; gap: 9px; font-size: 16px; color: #1c1a15; align-items: flex-start; }
         #qnaPdfPrintArea .pdf-q-opt.as, #qnaPdfPrintArea .pdf-q-opt-as { font-family: 'Noto Sans Bengali', sans-serif; }
         #qnaPdfPrintArea .pdf-opt-tag {
-            flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 11px;
-            width: 20px; height: 20px; border-radius: 5px; border: 1px solid #dcd4bc;
+            flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 13px;
+            width: 24px; height: 24px; border-radius: 6px; border: 1px solid #dcd4bc;
             display: flex; align-items: center; justify-content: center; color: #5b5646;
         }
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-tag { background: #2f6b45; border-color: #2f6b45; color: #fff; }
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 600; }
-        #qnaPdfPrintArea .pdf-answer-box { margin-top: 4px; font-size: 13.5px; color: #2f6b45; font-weight: 600; line-height: 1.45; }
+        #qnaPdfPrintArea .pdf-answer-box { margin-top: 4px; font-size: 15.5px; color: #2f6b45; font-weight: 600; line-height: 1.45; }
         #qnaPdfPrintArea .pdf-answer-box.as { font-family: 'Noto Sans Bengali', sans-serif; }
         #qnaPdfPrintArea .pdf-q-hint {
-            margin-top: 9px; font-size: 13.5px; color: #1c1a15; font-weight: 600; background: #fff8e6; border-left: 4px solid #c9a227;
+            margin-top: 9px; font-size: 14.5px; color: #1c1a15; font-weight: 600; background: #fff8e6; border-left: 4px solid #c9a227;
             padding: 8px 13px; border-radius: 0 6px 6px 0; line-height: 1.45;
         }
         #qnaPdfPrintArea .pdf-q-hint.as { font-family: 'Noto Sans Bengali', sans-serif; }
@@ -4611,6 +4632,7 @@
                     <button class="btn btn-secondary btn-sm" onclick="openCreateTestModal()"><i class="fas fa-plus-circle"></i> Create</button>
                     <button class="btn btn-success btn-sm" onclick="openImportTestModal()"><i class="fas fa-code"></i> JSON</button>
                     <button class="btn btn-accent btn-sm" onclick="openCreateFolderModal(currentTestFolderId, 'test')"><i class="fas fa-folder-plus"></i> Folder</button>
+                    <button class="btn btn-outline btn-sm" onclick="confirmBulkGenerateAllQnaPdfs()" title="Generates and caches every language/mode PDF combination for every test that doesn't have one yet — so students always get an instant download instead of waiting on their own device"><i class="fas fa-bolt"></i> Generate All PDFs</button>
                 </div>
             </div>
 
@@ -5810,9 +5832,13 @@
                     folders: mergedFolders,
                     videos: mergedVideos,
                     courses: mergedCourses
-                }, 45000); // this rewrites the whole Sheet inside a write-lock
-                           // that itself can wait up to 30s for its turn —
-                           // needs real headroom, not the 15s default.
+                }, 60000); // this rewrites the whole Sheet inside a write-lock
+                           // that itself can wait up to 30s for its turn, PLUS
+                           // the time to actually write every test's full
+                           // question bank back to Sheets — a big test bank
+                           // (several 450+ question tests) can make that
+                           // genuinely slow, especially on mobile data. 45s
+                           // wasn't enough headroom for that combination.
                 clearTimeout(savingToastTimer);
                 if (!result.success) {
                     showToast('⚠️ Server sync failed: ' + (result.error || '') + ' — retrying automatically...', 'error');
@@ -5847,7 +5873,13 @@
                 }
             } catch (err) {
                 clearTimeout(savingToastTimer);
-                showToast('⚠️ Sync failed — will keep retrying in the background. Don\'t close this tab yet.', 'error');
+                // Most often a timeout — this sync rewrites the FULL test
+                // bank (every test's complete question list) on every
+                // save, so it scales with how much content exists overall,
+                // not just what was just edited. Showing the real reason
+                // here (rather than just "failed") is what makes a repeat
+                // of this diagnosable instead of a mystery.
+                showToast('⚠️ Sync failed (' + (err && err.message ? err.message : 'connection issue') + ') — will keep retrying in the background. Don\'t close this tab yet.', 'error');
                 console.warn('Push failed:', err);
                 scheduleRetry(oldStore, newStore, err && err.message);
             } finally {
@@ -8313,10 +8345,19 @@
             // asked for, just the noise.
             if (currentUser && currentUser.role !== 'admin' && type !== 'error') return;
             const container = document.getElementById('toastContainer');
+            // Caps how many ever stack at once — a burst in quick
+            // succession (login checks, sync status, PDF progress) used
+            // to just keep piling up with nothing limiting it. Dropping
+            // the oldest outright (no exit animation) rather than
+            // shortening everyone's display time keeps each individual
+            // message readable for its full duration.
+            while (container.children.length >= 3) {
+                container.firstElementChild.remove();
+            }
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
             const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle' };
-            toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${msg}`;
+            toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> <span>${msg}</span>`;
             container.appendChild(toast);
             setTimeout(() => {
                 toast.style.opacity = '0';
@@ -15473,7 +15514,11 @@
             if (!el) {
                 el = document.createElement('div');
                 el.id = 'qnaPdfProgressBadge';
-                el.style.cssText = 'position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:10px;z-index:10001;background:rgba(20,20,20,0.85);color:#fff;font-size:12px;font-weight:600;padding:6px 12px;border-radius:20px;pointer-events:none;max-width:55vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 2px 10px rgba(0,0,0,0.25);';
+                // Bottom-right, opposite corner from the toast stack
+                // (top-right) — they're both visible for the same PDF
+                // export at once (per-page progress here, the final
+                // result as a toast), so they need to not collide.
+                el.style.cssText = 'position:fixed;bottom:calc(14px + env(safe-area-inset-bottom,0px));right:12px;z-index:10001;background:rgba(22,24,34,0.92);color:#fff;font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:14px;pointer-events:none;max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 10px 30px rgba(0,0,0,0.35);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);';
                 document.body.appendChild(el);
             }
             el.textContent = text;
@@ -15580,7 +15625,7 @@
             ]);
         }
 
-        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey) {
+        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true) {
             const isTest = source.type === 'test';
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
             showPdfProgress('Preparing PDF...');
@@ -15753,22 +15798,31 @@
             } catch (err) {
                 console.error(err);
                 hidePdfProgress();
-                showToast('PDF generation failed: ' + (err.message || err), 'error');
-                return;
+                if (deliverLocally) showToast('PDF generation failed: ' + (err.message || err), 'error');
+                return false;
             } finally {
                 iframe.remove();
             }
 
-            // Deliver to THIS device right away from the blob already in
-            // hand — no reason to wait on a Drive round-trip just to get
-            // the file the person who triggered generation actually
-            // asked for. iOS can't reliably save a blob: URL even here,
-            // so that one device does have to wait on the Drive upload
-            // below before it has anything it can actually save.
-            if (!isIOS()) {
-                hidePdfProgress();
-                downloadBlobToDevice(blob, safeName);
-                showToast('✅ PDF downloaded', 'success');
+            // deliverLocally is false only from the bulk "Generate All
+            // PDFs" admin tool (see bulkGenerateAllQnaPdfs) — that's
+            // purely about filling the Drive cache for everyone else,
+            // not about handing THIS device a file for every single
+            // combination it generates, and the per-combo toasts below
+            // would otherwise spam a burst of up to 3-digit count.
+            if (deliverLocally) {
+                // Deliver to THIS device right away from the blob already
+                // in hand — no reason to wait on a Drive round-trip just
+                // to get the file the person who triggered generation
+                // actually asked for. iOS can't reliably save a blob: URL
+                // even here, so that one device does have to wait on the
+                // Drive upload below before it has anything it can
+                // actually save.
+                if (!isIOS()) {
+                    hidePdfProgress();
+                    downloadBlobToDevice(blob, safeName);
+                    showToast('✅ PDF downloaded', 'success');
+                }
             }
 
             // uploadFileToDrive authenticates as the logged-in admin
@@ -15777,9 +15831,10 @@
             // admin's own device. Every other device (student or admin)
             // still benefits from a cache once one exists, via the
             // cachedFileId check in printQnaPdf above.
+            let cacheWriteOk = false;
             if (cacheKey && currentUser && currentUser.role === 'admin') {
                 try {
-                    if (isIOS()) showPdfProgress('Uploading...');
+                    if (deliverLocally && isIOS()) showPdfProgress('Uploading...');
                     const base64 = await blobToBase64(blob);
                     // Extra time over uploadFileToDrive's own default: a
                     // 40+ page PDF is a few MB even compressed, and as
@@ -15794,7 +15849,8 @@
                         t.qnaPdfDrive[cacheKey] = fileId;
                         saveStore(store);
                     }
-                    if (isIOS()) {
+                    cacheWriteOk = true;
+                    if (deliverLocally && isIOS()) {
                         showPdfProgress('Downloading...');
                         await downloadFileIdToDevice(fileId, safeName);
                         hidePdfProgress();
@@ -15802,18 +15858,20 @@
                     }
                 } catch (err) {
                     console.error('PDF cache upload failed', err);
-                    if (isIOS()) {
+                    if (deliverLocally && isIOS()) {
                         hidePdfProgress();
                         showToast('Could not save this PDF on this device — try again on a laptop or Android phone', 'error');
                     }
                 }
-            } else if (isIOS()) {
+            } else if (deliverLocally && isIOS()) {
                 // Non-admin on iOS with no cached copy yet — there's
                 // nothing that can be handed to Safari here that it will
                 // reliably let the person save.
                 hidePdfProgress();
                 showToast("This PDF hasn't been generated yet — ask your teacher to open Download PDF once first", 'error');
             }
+            hidePdfProgress();
+            return deliverLocally ? true : cacheWriteOk;
         }
 
         // Both scripts are plain (non-async/defer) <script src> tags near
@@ -15826,6 +15884,122 @@
                 await new Promise(r => setTimeout(r, 100));
             }
             return !!(window.jspdf && window.html2canvas);
+        }
+
+        // "Generate All PDFs" — admin bulk tool. Walks every test, builds
+        // every language/mode/hints combination that test actually
+        // supports, skips whatever's already cached, and generates +
+        // uploads the rest to Drive one at a time — so instead of an
+        // admin manually opening Download PDF on every test, in every
+        // language, once each (see the original ask this replaced), one
+        // button does the whole backlog. Nothing downloads to THIS
+        // device during the run (generateAndDeliverQnaPdf's
+        // deliverLocally=false) — the point is filling the shared Drive
+        // cache, not collecting dozens of files on the admin's own phone.
+        let bulkPdfCancelRequested = false;
+
+        function qnaPdfCombosForTest(test) {
+            const langs = ['en', 'as', 'both'];
+            const modes = ['answer', 'options'];
+            const hintsOptions = (test.questions || []).some(q => q.hint_en || q.hint_as) ? [false, true] : [false];
+            const combos = [];
+            langs.forEach(lang => modes.forEach(mode => hintsOptions.forEach(hints => {
+                combos.push({ lang, mode, hints });
+            })));
+            return combos;
+        }
+
+        function showBulkPdfPanel() {
+            if (document.getElementById('bulkPdfPanel')) return;
+            const el = document.createElement('div');
+            el.id = 'bulkPdfPanel';
+            el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:10002;background:rgba(22,24,34,0.95);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:12px 16px;box-shadow:0 14px 40px rgba(0,0,0,0.4);color:#fff;font-size:12.5px;max-width:min(420px,calc(100vw - 24px));width:100%;display:flex;flex-direction:column;gap:8px;';
+            el.innerHTML = `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <strong id="bulkPdfPanelTitle" style="font-weight:700;">Generating PDFs...</strong>
+                    <button type="button" onclick="bulkPdfCancelRequested=true;" class="btn btn-sm btn-outline" style="padding:3px 10px;font-size:11px;">Stop</button>
+                </div>
+                <div id="bulkPdfPanelSub" style="opacity:.8;"></div>
+                <div style="height:5px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden;">
+                    <div id="bulkPdfPanelBar" style="height:100%;width:0%;background:var(--accent, #f59e0b);transition:width .25s;"></div>
+                </div>`;
+            document.body.appendChild(el);
+        }
+        function updateBulkPdfPanel(title, sub, pct) {
+            showBulkPdfPanel();
+            const t = document.getElementById('bulkPdfPanelTitle');
+            const s = document.getElementById('bulkPdfPanelSub');
+            const b = document.getElementById('bulkPdfPanelBar');
+            if (t) t.textContent = title;
+            if (s) s.textContent = sub;
+            if (b) b.style.width = Math.max(0, Math.min(100, pct)) + '%';
+        }
+        function closeBulkPdfPanel() {
+            document.getElementById('bulkPdfPanel')?.remove();
+        }
+
+        function confirmBulkGenerateAllQnaPdfs() {
+            if (!confirm("Generate and cache every PDF combination (language × options × hints) for every test that doesn't have one yet?\n\nThis can take a long time for a large test bank — keep this tab open while it runs. You can stop it partway and resume later; already-cached combinations are always skipped.")) return;
+            bulkGenerateAllQnaPdfs();
+        }
+
+        async function bulkGenerateAllQnaPdfs() {
+            if (!currentUser || currentUser.role !== 'admin') return;
+            const store = getStore();
+            const tests = store.tests.filter(t => (t.questionCount || 0) > 0);
+            if (!tests.length) { showToast('No tests with questions found', 'error'); return; }
+
+            // Total combos aren't known until each test's hint content is
+            // checked (qnaPdfCombosForTest depends on test.questions), so
+            // this is an estimate for the progress bar only, refined as
+            // real counts come in — never shown as more precise than it is.
+            let estTotal = tests.length * 4; // a rough floor (2 langs-worth skipped is common); corrected below
+            let done = 0;
+            let generated = 0, skippedCached = 0, failed = 0;
+            bulkPdfCancelRequested = false;
+            updateBulkPdfPanel('Generating PDFs...', `Starting — ${tests.length} tests`, 0);
+
+            for (let ti = 0; ti < tests.length; ti++) {
+                if (bulkPdfCancelRequested) break;
+                const test = tests[ti];
+                updateBulkPdfPanel('Generating PDFs...', `Loading "${test.title}" (${ti + 1}/${tests.length})...`, (done / estTotal) * 100);
+                try {
+                    await ensureTestFullyLoaded(test);
+                } catch (err) {
+                    console.error('Could not load', test.id, err);
+                    continue;
+                }
+                if (!test.questions || !test.questions.length) continue;
+
+                const combos = qnaPdfCombosForTest(test);
+                // Recalibrate the estimate now that this test's real combo
+                // count (which depends on whether it has any hints) is
+                // known, so the bar doesn't visibly jump at the very end.
+                estTotal += combos.length - 4;
+
+                for (let ci = 0; ci < combos.length; ci++) {
+                    if (bulkPdfCancelRequested) break;
+                    const opts = combos[ci];
+                    const cacheKey = qnaPdfCacheKey(test.id, opts);
+                    done++;
+                    const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
+                    const modeLabel = opts.mode === 'options' ? 'All options' : 'Answer only';
+                    updateBulkPdfPanel(
+                        `Generating PDFs... (${generated} done, ${skippedCached} already cached)`,
+                        `"${test.title}" — ${langLabel}, ${modeLabel}${opts.hints ? ' + hints' : ''}`,
+                        (done / estTotal) * 100
+                    );
+                    if (test.qnaPdfDrive && test.qnaPdfDrive[cacheKey]) { skippedCached++; continue; }
+                    const title = test.title || 'Mock Test';
+                    const safeName = (title + ' (' + langLabel + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
+                    const ok = await generateAndDeliverQnaPdf({ type: 'test', data: test }, opts, title, safeName, cacheKey, false);
+                    if (ok) generated++; else failed++;
+                }
+            }
+
+            closeBulkPdfPanel();
+            const cancelledNote = bulkPdfCancelRequested ? ' (stopped early)' : '';
+            showToast(`✅ Done${cancelledNote}: ${generated} generated, ${skippedCached} already cached, ${failed} failed`, failed ? 'error' : 'success');
         }
     </script>
 </body>
