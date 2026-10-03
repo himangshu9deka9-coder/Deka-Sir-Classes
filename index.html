@@ -5306,7 +5306,14 @@
                 })();
             }
 
-            pushStoreToServer(oldStore, newStoreSnapshot);
+            // Returning this (previously a bare statement) changes
+            // nothing for saveStore()'s ~50 existing fire-and-forget
+            // callers — they already don't look at its return value. It
+            // just lets a caller that DOES care (bulkGenerateAllQnaPdfs'
+            // flushCache, so it can tell the admin once a batch has
+            // actually reached the server rather than just been queued)
+            // await it.
+            return pushStoreToServer(oldStore, newStoreSnapshot);
         }
 
         // ================================================================
@@ -15625,7 +15632,7 @@
             ]);
         }
 
-        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true) {
+        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true, persistCache = true) {
             const isTest = source.type === 'test';
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
             showPdfProgress('Preparing PDF...');
@@ -15847,7 +15854,27 @@
                     if (t) {
                         t.qnaPdfDrive = t.qnaPdfDrive || {};
                         t.qnaPdfDrive[cacheKey] = fileId;
-                        saveStore(store);
+                        // persistCache=false is the bulk "Generate All
+                        // PDFs" tool (see bulkGenerateAllQnaPdfs): it sets
+                        // this in memory so THIS run's own "already
+                        // cached?" checks on later combos see it right
+                        // away, but defers the actual saveStore() to its
+                        // own batched flush. saveStore() triggers a full
+                        // pull-merge-rewrite sync of the ENTIRE test bank
+                        // — calling it after every single one of a
+                        // hundred-plus generated PDFs was slow enough to
+                        // start hitting Google's write-rate limits mid-run,
+                        // and a sync that failed partway through meant
+                        // whatever had already been generated never
+                        // actually reached the Sheet — so stopping and
+                        // resuming the bulk run looked like it "forgot"
+                        // everything already done, even though all those
+                        // files really were sitting in Drive the whole
+                        // time (just orphaned, not referenced by any
+                        // test). One normal single-test download is a
+                        // single cache entry either way, so this costs it
+                        // nothing.
+                        if (persistCache) saveStore(store);
                     }
                     cacheWriteOk = true;
                     if (deliverLocally && isIOS()) {
@@ -15956,49 +15983,87 @@
             let estTotal = tests.length * 4; // a rough floor (2 langs-worth skipped is common); corrected below
             let done = 0;
             let generated = 0, skippedCached = 0, failed = 0;
+            let unsavedSinceFlush = 0;
             bulkPdfCancelRequested = false;
             updateBulkPdfPanel('Generating PDFs...', `Starting — ${tests.length} tests`, 0);
 
-            for (let ti = 0; ti < tests.length; ti++) {
-                if (bulkPdfCancelRequested) break;
-                const test = tests[ti];
-                updateBulkPdfPanel('Generating PDFs...', `Loading "${test.title}" (${ti + 1}/${tests.length})...`, (done / estTotal) * 100);
+            // Flushes every newly-cached PDF generated so far to the
+            // server in ONE sync, instead of one sync per PDF (see the
+            // persistCache comment in generateAndDeliverQnaPdf for why
+            // that was both slow and, worse, lossy under Stop/resume).
+            // Called periodically below AND unconditionally once the
+            // loop ends, whether that's completion, Stop, or an error —
+            // so progress is never silently left unsaved.
+            async function flushCache(reason) {
+                if (!unsavedSinceFlush) return;
+                updateBulkPdfPanel('Saving progress...', reason || 'Syncing cache to the server', (done / estTotal) * 100);
                 try {
-                    await ensureTestFullyLoaded(test);
+                    await saveStore(getStore());
                 } catch (err) {
-                    console.error('Could not load', test.id, err);
-                    continue;
+                    console.error('Bulk PDF cache flush failed', err);
                 }
-                if (!test.questions || !test.questions.length) continue;
-
-                const combos = qnaPdfCombosForTest(test);
-                // Recalibrate the estimate now that this test's real combo
-                // count (which depends on whether it has any hints) is
-                // known, so the bar doesn't visibly jump at the very end.
-                estTotal += combos.length - 4;
-
-                for (let ci = 0; ci < combos.length; ci++) {
-                    if (bulkPdfCancelRequested) break;
-                    const opts = combos[ci];
-                    const cacheKey = qnaPdfCacheKey(test.id, opts);
-                    done++;
-                    const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
-                    const modeLabel = opts.mode === 'options' ? 'All options' : 'Answer only';
-                    updateBulkPdfPanel(
-                        `Generating PDFs... (${generated} done, ${skippedCached} already cached)`,
-                        `"${test.title}" — ${langLabel}, ${modeLabel}${opts.hints ? ' + hints' : ''}`,
-                        (done / estTotal) * 100
-                    );
-                    if (test.qnaPdfDrive && test.qnaPdfDrive[cacheKey]) { skippedCached++; continue; }
-                    const title = test.title || 'Mock Test';
-                    const safeName = (title + ' (' + langLabel + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
-                    const ok = await generateAndDeliverQnaPdf({ type: 'test', data: test }, opts, title, safeName, cacheKey, false);
-                    if (ok) generated++; else failed++;
-                }
+                unsavedSinceFlush = 0;
             }
 
-            closeBulkPdfPanel();
-            const cancelledNote = bulkPdfCancelRequested ? ' (stopped early)' : '';
+            // try/finally so a flush always happens on the way out —
+            // Stop, normal completion, or an unexpected exception midway
+            // — rather than only on the clean-finish path. That's what
+            // actually guarantees "stop and resume" never loses progress.
+            try {
+                for (let ti = 0; ti < tests.length; ti++) {
+                    if (bulkPdfCancelRequested) break;
+                    const test = tests[ti];
+                    updateBulkPdfPanel('Generating PDFs...', `Loading "${test.title}" (${ti + 1}/${tests.length})...`, (done / estTotal) * 100);
+                    try {
+                        await ensureTestFullyLoaded(test);
+                    } catch (err) {
+                        console.error('Could not load', test.id, err);
+                        continue;
+                    }
+                    if (!test.questions || !test.questions.length) continue;
+
+                    const combos = qnaPdfCombosForTest(test);
+                    // Recalibrate the estimate now that this test's real
+                    // combo count (which depends on whether it has any
+                    // hints) is known, so the bar doesn't visibly jump at
+                    // the very end.
+                    estTotal += combos.length - 4;
+
+                    for (let ci = 0; ci < combos.length; ci++) {
+                        if (bulkPdfCancelRequested) break;
+                        const opts = combos[ci];
+                        const cacheKey = qnaPdfCacheKey(test.id, opts);
+                        done++;
+                        const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
+                        const modeLabel = opts.mode === 'options' ? 'All options' : 'Answer only';
+                        updateBulkPdfPanel(
+                            `Generating PDFs... (${generated} done, ${skippedCached} already cached)`,
+                            `"${test.title}" — ${langLabel}, ${modeLabel}${opts.hints ? ' + hints' : ''}`,
+                            (done / estTotal) * 100
+                        );
+                        if (test.qnaPdfDrive && test.qnaPdfDrive[cacheKey]) { skippedCached++; continue; }
+                        const title = test.title || 'Mock Test';
+                        const safeName = (title + ' (' + langLabel + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
+                        const ok = await generateAndDeliverQnaPdf({ type: 'test', data: test }, opts, title, safeName, cacheKey, false, false);
+                        if (ok) { generated++; unsavedSinceFlush++; } else failed++;
+
+                        // Flush every 10 rather than only at the very end
+                        // — if the connection drops or the tab gets
+                        // closed mid-run, at most the last ~10 generated-
+                        // but-unflushed PDFs would need regenerating, not
+                        // the whole run.
+                        if (unsavedSinceFlush >= 10) await flushCache(`${generated} generated so far`);
+                    }
+                }
+            } catch (err) {
+                console.error('Bulk PDF generation stopped by an error', err);
+                showToast('Bulk generation hit an error and stopped: ' + (err.message || err), 'error');
+            } finally {
+                await flushCache('Finishing up');
+                closeBulkPdfPanel();
+            }
+
+            const cancelledNote = bulkPdfCancelRequested ? ' (stopped early — progress saved, resume anytime)' : '';
             showToast(`✅ Done${cancelledNote}: ${generated} generated, ${skippedCached} already cached, ${failed} failed`, failed ? 'error' : 'success');
         }
     </script>
