@@ -4632,7 +4632,7 @@
                     <button class="btn btn-secondary btn-sm" onclick="openCreateTestModal()"><i class="fas fa-plus-circle"></i> Create</button>
                     <button class="btn btn-success btn-sm" onclick="openImportTestModal()"><i class="fas fa-code"></i> JSON</button>
                     <button class="btn btn-accent btn-sm" onclick="openCreateFolderModal(currentTestFolderId, 'test')"><i class="fas fa-folder-plus"></i> Folder</button>
-                    <button class="btn btn-outline btn-sm" onclick="confirmBulkGenerateAllQnaPdfs()" title="Generates and caches every language/mode PDF combination for every test that doesn't have one yet — so students always get an instant download instead of waiting on their own device"><i class="fas fa-bolt"></i> Generate All PDFs</button>
+                    <button class="btn btn-outline btn-sm" onclick="cleanUpQnaPdfDrive()" title="Finds and deletes Q&A PDFs sitting in Drive that no test actually references anymore — e.g. orphaned by deleting/editing a test after its PDF was cached"><i class="fas fa-broom"></i> Clean Up PDF Drive</button>
                 </div>
             </div>
 
@@ -5309,10 +5309,9 @@
             // Returning this (previously a bare statement) changes
             // nothing for saveStore()'s ~50 existing fire-and-forget
             // callers — they already don't look at its return value. It
-            // just lets a caller that DOES care (bulkGenerateAllQnaPdfs'
-            // flushCache, so it can tell the admin once a batch has
-            // actually reached the server rather than just been queued)
-            // await it.
+            // just lets a caller that DOES care (regenerateTestQnaPdfs,
+            // so it can tell the admin once its batch has actually
+            // reached the server rather than just been queued) await it.
             return pushStoreToServer(oldStore, newStoreSnapshot);
         }
 
@@ -5915,7 +5914,7 @@
             });
         }
 
-        async function uploadFileToDrive(base64DataUrl, fileName, mimeType, category, timeoutMs) {
+        async function uploadFileToDrive(base64DataUrl, fileName, mimeType, category, timeoutMs, folderPath) {
             pendingUploads++;
             try {
                 // Phone camera photos are routinely 3-5MB+ at full resolution.
@@ -5944,7 +5943,11 @@
                     fileBase64: base64,
                     fileName: fileName,
                     fileMimeType: uploadMime,
-                    fileCategory: category || 'other'
+                    fileCategory: category || 'other',
+                    // Only meaningful for category "qnaPdf" right now — the
+                    // mock's own Mock/GK/.../folder breadcrumb, so Drive
+                    // mirrors that same structure instead of one flat pile.
+                    folderPath: folderPath || undefined
                 }, timeoutMs || 45000); // uploading a real file (PDF/image) to
                            // Drive — same reasoning as syncStore, needs headroom.
                 if (!result.success) throw new Error(result.error || 'Upload failed');
@@ -8988,6 +8991,7 @@
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
                             <button class="btn ${t.qnaButtonHidden ? 'btn-outline' : 'btn-success'} btn-sm" onclick="toggleTestQnaButton('${t.id}')" title="${t.qnaButtonHidden ? 'Show the Start Q&A button to students' : 'Hide the Start Q&A button from students'}"><i class="fas fa-${t.qnaButtonHidden ? 'eye-slash' : 'eye'}"></i> Q&amp;A Btn</button>
                             <button class="btn ${t.guestAllowed ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestGuestAccess('${t.id}')" title="${t.guestAllowed ? 'This mock is open to visitors with no account \u2014 tap to require sign-in again' : 'Let visitors with no account try this mock (Start Mock / Q&A / PDF), free'}"><i class="fas fa-${t.guestAllowed ? 'unlock' : 'user-slash'}"></i> Guest Access</button>
+                            <button class="btn ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'btn-success' : 'btn-outline'} btn-sm" onclick="confirmRegenerateTestQnaPdfs('${t.id}')" title="${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'This mock has cached PDFs that auto-refresh on every edit \u2014 tap to force-regenerate now' : 'Generates and caches every PDF version of this mock so students get an instant download \u2014 keeps itself up to date automatically after this'}"><i class="fas fa-cloud-upload-alt"></i> ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'PDF Cached' : 'Upload PDF'}</button>
                             <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
                             <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPdfVisible('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
                             <button class="btn ${t.pdfLocked ? 'btn-danger' : 'btn-outline'} btn-sm" onclick="toggleTestPdfLock('${t.id}')" title="${t.pdfLocked ? 'PDF download locked — ₹' + (t.pdfPrice || 0) + ' (tap to unlock)' : 'PDF download is free (tap to lock + set a price)'}"><i class="fas fa-${t.pdfLocked ? 'lock' : 'lock-open'}"></i> PDF Lock</button>
@@ -9732,6 +9736,12 @@
                 hint_en: q.hint_en || '', hint_as: q.hint_as || ''
             }));
             saveStore(store);
+            // Fire-and-forget: a cached PDF for this test (see "Upload
+            // PDF") rebuilds itself from the just-edited questions right
+            // now, rather than quietly keep serving the pre-edit content
+            // to anyone who downloads it. Does nothing if this test's
+            // PDF was never generated in the first place.
+            maybeAutoRegenerateQnaPdfs(test);
             // Stay right here in the JSON editor after saving instead of
             // closing the modal — closing used to bounce the admin back
             // out to wherever the test list happened to be, which meant
@@ -10213,6 +10223,15 @@
                 test.questions = questions;
 
                 saveStore(store);
+                // Fire-and-forget: a cached PDF for this test (see
+                // "Upload PDF") rebuilds itself from the just-edited
+                // questions/title/folder right now, rather than quietly
+                // keep serving pre-edit content — including a title or
+                // folder change, which affects the cached PDF's filename
+                // and Drive location, not just its content. Does nothing
+                // if this test's PDF was never generated in the first
+                // place.
+                maybeAutoRegenerateQnaPdfs(test);
                 const keepOpen = window._keepEditModalOpenOnSave;
                 window._keepEditModalOpenOnSave = false;
                 if (keepOpen) {
@@ -15632,7 +15651,7 @@
             ]);
         }
 
-        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true, persistCache = true) {
+        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true, persistCache = true, folderPath = null) {
             const isTest = source.type === 'test';
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
             showPdfProgress('Preparing PDF...');
@@ -15811,9 +15830,9 @@
                 iframe.remove();
             }
 
-            // deliverLocally is false only from the bulk "Generate All
-            // PDFs" admin tool (see bulkGenerateAllQnaPdfs) — that's
-            // purely about filling the Drive cache for everyone else,
+            // deliverLocally is false only from the per-test "Upload
+            // PDF" / auto-regenerate tool (see regenerateTestQnaPdfs) —
+            // that's purely about filling the Drive cache for everyone else,
             // not about handing THIS device a file for every single
             // combination it generates, and the per-combo toasts below
             // would otherwise spam a burst of up to 3-digit count.
@@ -15843,19 +15862,26 @@
                 try {
                     if (deliverLocally && isIOS()) showPdfProgress('Uploading...');
                     const base64 = await blobToBase64(blob);
+                    // A caller that already knows the folder path (the
+                    // per-test regenerate flow) passes it; an ordinary
+                    // single Download PDF click doesn't bother, so it's
+                    // worked out here instead — either way every Q&A PDF
+                    // ends up nested under the mock's own folder
+                    // breadcrumb in Drive, never a flat pile.
+                    const uploadFolderPath = folderPath || (isTest ? qnaPdfFolderPathNames(source.data) : null);
                     // Extra time over uploadFileToDrive's own default: a
                     // 40+ page PDF is a few MB even compressed, and as
                     // base64 that's ~37% bigger again — the default
                     // timeout was tuned for material photos, not this.
-                    const driveRef = await uploadFileToDrive(base64, safeName + '.pdf', 'application/pdf', 'qnaPdf', 90000);
+                    const driveRef = await uploadFileToDrive(base64, safeName + '.pdf', 'application/pdf', 'qnaPdf', 90000, uploadFolderPath);
                     const fileId = driveRef.replace(/^drive:/, '');
                     const store = getStore();
                     const t = store.tests.find(x => x.id === source.data.id);
                     if (t) {
                         t.qnaPdfDrive = t.qnaPdfDrive || {};
                         t.qnaPdfDrive[cacheKey] = fileId;
-                        // persistCache=false is the bulk "Generate All
-                        // PDFs" tool (see bulkGenerateAllQnaPdfs): it sets
+                        // persistCache=false is the per-test "Upload PDF"
+                        // / auto-regenerate tool (see regenerateTestQnaPdfs): it sets
                         // this in memory so THIS run's own "already
                         // cached?" checks on later combos see it right
                         // away, but defers the actual saveStore() to its
@@ -15913,16 +15939,15 @@
             return !!(window.jspdf && window.html2canvas);
         }
 
-        // "Generate All PDFs" — admin bulk tool. Walks every test, builds
-        // every language/mode/hints combination that test actually
-        // supports, skips whatever's already cached, and generates +
-        // uploads the rest to Drive one at a time — so instead of an
-        // admin manually opening Download PDF on every test, in every
-        // language, once each (see the original ask this replaced), one
-        // button does the whole backlog. Nothing downloads to THIS
-        // device during the run (generateAndDeliverQnaPdf's
-        // deliverLocally=false) — the point is filling the shared Drive
-        // cache, not collecting dozens of files on the admin's own phone.
+        // Per-test "Upload PDF" (see regenerateTestQnaPdfs below) — walks
+        // every language/mode/hints combination ONE test actually
+        // supports and generates + uploads each to Drive. This used to be
+        // one global "do every test in the bank" button; a per-test one
+        // instead means the admin decides which mocks are worth having a
+        // cached PDF at all, and editing a test that already has one
+        // triggers a fresh regeneration automatically (see
+        // maybeAutoRegenerateQnaPdfs, called after a test save) instead
+        // of silently serving the old content forever.
         let bulkPdfCancelRequested = false;
 
         function qnaPdfCombosForTest(test) {
@@ -15965,106 +15990,163 @@
             document.getElementById('bulkPdfPanel')?.remove();
         }
 
-        function confirmBulkGenerateAllQnaPdfs() {
-            if (!confirm("Generate and cache every PDF combination (language × options × hints) for every test that doesn't have one yet?\n\nThis can take a long time for a large test bank — keep this tab open while it runs. You can stop it partway and resume later; already-cached combinations are always skipped.")) return;
-            bulkGenerateAllQnaPdfs();
+        // Root-to-leaf folder names for one test's own Mock/GK/.../
+        // breadcrumb (see getFolderPath) — used so a generated Q&A PDF
+        // lands in the matching nested Drive folder (see saveFileToDrive
+        // server-side) instead of one flat pile, e.g.
+        // "Q&A PDFs/GK/Geography/Word Geography/...".
+        function qnaPdfFolderPathNames(test) {
+            return getFolderPath(test.folderId).map(f => (f.name || 'Untitled').trim() || 'Untitled');
         }
 
-        async function bulkGenerateAllQnaPdfs() {
+        function confirmRegenerateTestQnaPdfs(testId) {
+            const store = getStore();
+            const test = store.tests.find(t => t.id === testId);
+            if (!test) return;
+            const hasExisting = test.qnaPdfDrive && Object.keys(test.qnaPdfDrive).length > 0;
+            const msg = hasExisting
+                ? `Re-generate all PDF versions of "${test.title}"? The ${Object.keys(test.qnaPdfDrive).length} already-cached version(s) will be deleted from Drive and replaced with fresh ones built from the test's current questions.`
+                : `Generate and cache every PDF version (language × options × hints) of "${test.title}"?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
+            if (!confirm(msg)) return;
+            regenerateTestQnaPdfs(testId, { manual: true });
+        }
+
+        // The one function behind both the per-test "Upload PDF" button
+        // (manual: true) and the automatic re-run after a test edit is
+        // saved (manual: false, via maybeAutoRegenerateQnaPdfs) — always
+        // starts from a clean slate: delete whatever's already cached for
+        // THIS test, then generate every combination fresh. That's what
+        // makes "I edited a question" and "a student downloads the PDF"
+        // never disagree with each other — there is no in-between state
+        // where some cached copies reflect the edit and others don't.
+        async function regenerateTestQnaPdfs(testId, { manual = true } = {}) {
             if (!currentUser || currentUser.role !== 'admin') return;
             const store = getStore();
-            const tests = store.tests.filter(t => (t.questionCount || 0) > 0);
-            if (!tests.length) { showToast('No tests with questions found', 'error'); return; }
+            const test = store.tests.find(t => t.id === testId);
+            if (!test) return;
 
-            // Total combos aren't known until each test's hint content is
-            // checked (qnaPdfCombosForTest depends on test.questions), so
-            // this is an estimate for the progress bar only, refined as
-            // real counts come in — never shown as more precise than it is.
-            let estTotal = tests.length * 4; // a rough floor (2 langs-worth skipped is common); corrected below
-            let done = 0;
-            let generated = 0, skippedCached = 0, failed = 0;
-            let unsavedSinceFlush = 0;
             bulkPdfCancelRequested = false;
-            updateBulkPdfPanel('Generating PDFs...', `Starting — ${tests.length} tests`, 0);
-
-            // Flushes every newly-cached PDF generated so far to the
-            // server in ONE sync, instead of one sync per PDF (see the
-            // persistCache comment in generateAndDeliverQnaPdf for why
-            // that was both slow and, worse, lossy under Stop/resume).
-            // Called periodically below AND unconditionally once the
-            // loop ends, whether that's completion, Stop, or an error —
-            // so progress is never silently left unsaved.
-            async function flushCache(reason) {
-                if (!unsavedSinceFlush) return;
-                updateBulkPdfPanel('Saving progress...', reason || 'Syncing cache to the server', (done / estTotal) * 100);
-                try {
-                    await saveStore(getStore());
-                } catch (err) {
-                    console.error('Bulk PDF cache flush failed', err);
-                }
-                unsavedSinceFlush = 0;
+            updateBulkPdfPanel(manual ? 'Preparing...' : 'Updating cached PDFs...', `Loading "${test.title}"...`, 0);
+            try {
+                await ensureTestFullyLoaded(test);
+            } catch (err) {
+                closeBulkPdfPanel();
+                showToast('Could not load this test: ' + (err.message || err), 'error');
+                return;
+            }
+            if (!test.questions || !test.questions.length) {
+                closeBulkPdfPanel();
+                showToast('This test has no questions to generate a PDF from', 'error');
+                return;
             }
 
-            // try/finally so a flush always happens on the way out —
-            // Stop, normal completion, or an unexpected exception midway
-            // — rather than only on the clean-finish path. That's what
-            // actually guarantees "stop and resume" never loses progress.
+            // Delete whatever's already cached for this test FIRST, before
+            // generating anything new — so a stale PDF is never left
+            // reachable even momentarily between the old one going away
+            // and the new one landing, and so a cancelled/failed
+            // regeneration can't end up with both an old and a new copy
+            // both cached under different-looking state.
+            const oldFileIds = test.qnaPdfDrive ? Object.values(test.qnaPdfDrive) : [];
+            if (oldFileIds.length) {
+                updateBulkPdfPanel('Updating cached PDFs...', `Removing ${oldFileIds.length} old cached version(s)...`, 2);
+                try {
+                    await apiPost({ action: 'deleteDriveFiles', email: adminCreds.email, password: adminCreds.password, fileIds: oldFileIds }, 45000);
+                } catch (err) {
+                    console.error('Could not delete old cached PDFs', err);
+                    // Not fatal — an orphaned old file is a Drive-storage
+                    // annoyance (see "Clean Up PDF Drive"), not a
+                    // correctness problem, since it's about to stop being
+                    // referenced by test.qnaPdfDrive regardless.
+                }
+            }
+            test.qnaPdfDrive = {};
+
+            const combos = qnaPdfCombosForTest(test);
+            const folderPath = qnaPdfFolderPathNames(test);
+            let generated = 0, failed = 0;
+
             try {
-                for (let ti = 0; ti < tests.length; ti++) {
+                for (let ci = 0; ci < combos.length; ci++) {
                     if (bulkPdfCancelRequested) break;
-                    const test = tests[ti];
-                    updateBulkPdfPanel('Generating PDFs...', `Loading "${test.title}" (${ti + 1}/${tests.length})...`, (done / estTotal) * 100);
-                    try {
-                        await ensureTestFullyLoaded(test);
-                    } catch (err) {
-                        console.error('Could not load', test.id, err);
-                        continue;
-                    }
-                    if (!test.questions || !test.questions.length) continue;
-
-                    const combos = qnaPdfCombosForTest(test);
-                    // Recalibrate the estimate now that this test's real
-                    // combo count (which depends on whether it has any
-                    // hints) is known, so the bar doesn't visibly jump at
-                    // the very end.
-                    estTotal += combos.length - 4;
-
-                    for (let ci = 0; ci < combos.length; ci++) {
-                        if (bulkPdfCancelRequested) break;
-                        const opts = combos[ci];
-                        const cacheKey = qnaPdfCacheKey(test.id, opts);
-                        done++;
-                        const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
-                        const modeLabel = opts.mode === 'options' ? 'All options' : 'Answer only';
-                        updateBulkPdfPanel(
-                            `Generating PDFs... (${generated} done, ${skippedCached} already cached)`,
-                            `"${test.title}" — ${langLabel}, ${modeLabel}${opts.hints ? ' + hints' : ''}`,
-                            (done / estTotal) * 100
-                        );
-                        if (test.qnaPdfDrive && test.qnaPdfDrive[cacheKey]) { skippedCached++; continue; }
-                        const title = test.title || 'Mock Test';
-                        const safeName = (title + ' (' + langLabel + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
-                        const ok = await generateAndDeliverQnaPdf({ type: 'test', data: test }, opts, title, safeName, cacheKey, false, false);
-                        if (ok) { generated++; unsavedSinceFlush++; } else failed++;
-
-                        // Flush every 10 rather than only at the very end
-                        // — if the connection drops or the tab gets
-                        // closed mid-run, at most the last ~10 generated-
-                        // but-unflushed PDFs would need regenerating, not
-                        // the whole run.
-                        if (unsavedSinceFlush >= 10) await flushCache(`${generated} generated so far`);
-                    }
+                    const opts = combos[ci];
+                    const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
+                    const modeLabel = opts.mode === 'options' ? 'All options' : 'Answer only';
+                    updateBulkPdfPanel(
+                        `Updating cached PDFs... (${ci}/${combos.length})`,
+                        `${langLabel}, ${modeLabel}${opts.hints ? ' + hints' : ''}`,
+                        ((ci + 1) / combos.length) * 100
+                    );
+                    const cacheKey = qnaPdfCacheKey(test.id, opts);
+                    const title = test.title || 'Mock Test';
+                    const safeName = (title + ' (' + langLabel + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
+                    const ok = await generateAndDeliverQnaPdf({ type: 'test', data: test }, opts, title, safeName, cacheKey, false, false, folderPath);
+                    if (ok) generated++; else failed++;
                 }
             } catch (err) {
-                console.error('Bulk PDF generation stopped by an error', err);
-                showToast('Bulk generation hit an error and stopped: ' + (err.message || err), 'error');
+                console.error('Regenerating PDFs stopped by an error', err);
+                showToast('PDF regeneration hit an error and stopped: ' + (err.message || err), 'error');
             } finally {
-                await flushCache('Finishing up');
+                updateBulkPdfPanel('Saving...', 'Syncing to the server', 100);
+                try { await saveStore(getStore()); } catch (err) { console.error('Could not save PDF cache', err); }
                 closeBulkPdfPanel();
             }
 
-            const cancelledNote = bulkPdfCancelRequested ? ' (stopped early — progress saved, resume anytime)' : '';
-            showToast(`✅ Done${cancelledNote}: ${generated} generated, ${skippedCached} already cached, ${failed} failed`, failed ? 'error' : 'success');
+            const cancelledNote = bulkPdfCancelRequested ? ' (stopped early)' : '';
+            showToast(`✅ "${test.title}" PDFs updated${cancelledNote}: ${generated} generated, ${failed} failed`, failed ? 'error' : 'success');
+        }
+
+        // Called right after a test save (both the form editor and the
+        // "Edit as JSON" bulk editor — see their submit handlers) — fire-
+        // and-forget on purpose so saving itself never has to wait on a
+        // PDF regeneration. Does nothing for a test that's never had its
+        // PDF generated at all; only tests the admin has explicitly
+        // opted into (via "Upload PDF") get kept in sync automatically.
+        function maybeAutoRegenerateQnaPdfs(test) {
+            if (test && test.qnaPdfDrive && Object.keys(test.qnaPdfDrive).length > 0) {
+                regenerateTestQnaPdfs(test.id, { manual: false });
+            }
+        }
+
+        // Finds Q&A PDFs physically sitting in Drive that no test's own
+        // qnaPdfDrive map references anymore, and deletes them. These can
+        // only really pile up from regenerateTestQnaPdfs's own delete step
+        // failing partway (logged, not fatal — see there) or from a test
+        // being deleted outright after its PDF was cached; normal editing
+        // and regeneration otherwise keeps Drive and each test's own
+        // cache record in sync automatically.
+        async function cleanUpQnaPdfDrive() {
+            if (!currentUser || currentUser.role !== 'admin') return;
+            showToast('Checking Drive for orphaned PDFs...', 'info');
+            let files;
+            try {
+                const result = await apiPost({ action: 'listDriveFiles', email: adminCreds.email, password: adminCreds.password, category: 'qnaPdf' }, 45000);
+                if (!result.success) throw new Error(result.error || 'Could not list files');
+                files = result.files || [];
+            } catch (err) {
+                showToast('Could not check Drive: ' + (err.message || err), 'error');
+                return;
+            }
+            if (!files.length) { showToast('No Q&A PDFs in Drive yet', 'info'); return; }
+
+            const referenced = new Set();
+            getStore().tests.forEach(t => {
+                if (t.qnaPdfDrive) Object.values(t.qnaPdfDrive).forEach(id => referenced.add(id));
+            });
+            const orphaned = files.filter(f => !referenced.has(f.id));
+            if (!orphaned.length) { showToast(`✅ All ${files.length} cached PDFs in Drive are still in use — nothing to clean up`, 'success'); return; }
+
+            const totalMb = (orphaned.reduce((sum, f) => sum + (f.size || 0), 0) / (1024 * 1024)).toFixed(1);
+            if (!confirm(`Found ${orphaned.length} orphaned PDF(s) in Drive (~${totalMb} MB) that no test references anymore.\n\nDelete them? They'll go to Drive's Trash, not be permanently erased immediately.`)) return;
+
+            showToast(`Deleting ${orphaned.length} file(s)...`, 'info');
+            try {
+                const result = await apiPost({ action: 'deleteDriveFiles', email: adminCreds.email, password: adminCreds.password, fileIds: orphaned.map(f => f.id) }, 60000);
+                if (!result.success) throw new Error(result.error || 'Delete failed');
+                const errCount = (result.errors || []).length;
+                showToast(`✅ Deleted ${result.deletedCount} file(s)${errCount ? `, ${errCount} failed` : ''}`, errCount ? 'error' : 'success');
+            } catch (err) {
+                showToast('Cleanup failed: ' + (err.message || err), 'error');
+            }
         }
     </script>
 </body>
