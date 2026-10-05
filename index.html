@@ -15462,6 +15462,22 @@
             const isBilingual = questions.some(q => q.question_as && q.question_as !== q.question_en);
             const hasAnyHint = isTest && questions.some(q => q.hint_en || q.hint_as);
 
+            // Students get a simple two-choice picker. Whichever language
+            // they tap downloads "All options + hints" (hints only when the
+            // test actually has some) — the exact version admin pre-caches
+            // on Drive, so it's an instant download.
+            if (isTest && currentUser?.role !== 'admin') {
+                if (!isBilingual) { submitStudentPdf('en'); return; }
+                openModal(`
+                    <div class="modal-header"><h3><i class="fas fa-file-pdf"></i> Download PDF</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+                    <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px;">
+                        <button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('en')"><i class="fas fa-font"></i> English</button>
+                        <button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('as')"><i class="fas fa-font"></i> Assamese</button>
+                    </div>
+                `);
+                return;
+            }
+
             let langRow = '';
             if (isBilingual) {
                 langRow = `
@@ -15520,6 +15536,13 @@
         function setPdfOptBtn(btn) {
             document.querySelectorAll('.' + btn.className.split(' ').find(c => c.startsWith('pdf-opt-'))).forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+        }
+
+        function submitStudentPdf(lang) {
+            const test = pdfPromptSource && pdfPromptSource.data;
+            const hints = !!(test && (test.questions || []).some(q => q.hint_en || q.hint_as));
+            closeModal();
+            printQnaPdf(pdfPromptSource, { lang, mode: 'options', hints });
         }
 
         function submitQnaPdfOptions() {
@@ -16006,15 +16029,14 @@
         // of silently serving the old content forever.
         let bulkPdfCancelRequested = false;
 
+        // Only the two versions students can ask for: English and
+        // Assamese, each with All options (+ hints when the test has any).
         function qnaPdfCombosForTest(test) {
-            const langs = ['en', 'as', 'both'];
-            const modes = ['answer', 'options'];
-            const hintsOptions = (test.questions || []).some(q => q.hint_en || q.hint_as) ? [false, true] : [false];
-            const combos = [];
-            langs.forEach(lang => modes.forEach(mode => hintsOptions.forEach(hints => {
-                combos.push({ lang, mode, hints });
-            })));
-            return combos;
+            const hints = (test.questions || []).some(q => q.hint_en || q.hint_as);
+            return [
+                { lang: 'en', mode: 'options', hints },
+                { lang: 'as', mode: 'options', hints }
+            ];
         }
 
         function showBulkPdfPanel() {
@@ -16072,8 +16094,8 @@
             if (!test) return;
             const hasExisting = test.qnaPdfDrive && Object.keys(test.qnaPdfDrive).length > 0;
             const msg = hasExisting
-                ? `Re-generate all PDF versions of "${test.title}"? The ${Object.keys(test.qnaPdfDrive).length} already-cached version(s) will be deleted from Drive and replaced with fresh ones built from the test's current questions.`
-                : `Generate and cache every PDF version (language × options × hints) of "${test.title}"?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
+                ? `Re-generate the English and Assamese PDFs of "${test.title}"? The ${Object.keys(test.qnaPdfDrive).length} already-cached version(s) will be deleted from Drive and replaced with fresh ones built from the test's current questions.`
+                : `Generate and cache the two student PDFs of "${test.title}" — English and Assamese, each with all options + hints?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
             if (!confirm(msg)) return;
             regenerateTestQnaPdfs(testId, { manual: true });
         }
@@ -16128,10 +16150,9 @@
             }
             test.qnaPdfDrive = {};
 
-            // If no question has any Assamese text, the "Assamese" and
-            // "Both" PDFs come out identical to the English one — so
-            // render/upload English once and point all three languages
-            // at the same Drive file. Cuts a 12-PDF run to 4.
+            // If no question has any Assamese text, the Assamese PDF comes
+            // out identical to the English one — so render/upload English
+            // once and point both languages at the same Drive file.
             const hasAssamese = (test.questions || []).some(q =>
                 q.question_as || q.hint_as || (q.options_as || []).some(Boolean));
             const allCombos = qnaPdfCombosForTest(test);
@@ -16159,7 +16180,7 @@
                 if (!hasAssamese) {
                     combos.forEach(c => {
                         const id = test.qnaPdfDrive[qnaPdfCacheKey(test.id, c)];
-                        if (id) ['as', 'both'].forEach(l => { test.qnaPdfDrive[qnaPdfCacheKey(test.id, { ...c, lang: l })] = id; });
+                        if (id) ['as'].forEach(l => { test.qnaPdfDrive[qnaPdfCacheKey(test.id, { ...c, lang: l })] = id; });
                     });
                 }
             } catch (err) {
