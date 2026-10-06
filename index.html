@@ -4192,7 +4192,7 @@
            ================================================================ */
         #qnaPdfPrintArea { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; background: #fff; color: #1c1a15; }
         #qnaPdfPrintArea .pdf-page {
-            background: #fffdf7; width: 794px; min-height: 1123px; position: relative;
+            background: #fff; width: 794px; min-height: 1123px; position: relative;
             display: flex; flex-direction: column; box-sizing: border-box;
         }
         /* Cover is exactly one page, always — its own content is short and
@@ -4240,10 +4240,10 @@
         #qnaPdfPrintArea .pdf-page-header-text { flex: 1; min-width: 0; }
         #qnaPdfPrintArea .pdf-page-header-brand { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 12.5px; color: #e0562f; }
         #qnaPdfPrintArea .pdf-page-header-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 10.5px; color: #5b5646; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        #qnaPdfPrintArea .pdf-doc-body { flex: 1 1 auto; padding: 20px 50px; position: relative; min-height: 0; }
+        #qnaPdfPrintArea .pdf-doc-body { flex: 1 1 auto; padding: 71px 69px 45px; position: relative; min-height: 0; }
         #qnaPdfPrintArea .pdf-content-footer {
             flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 10px;
-            padding: 10px 40px; border-top: 1px solid #dcd4bc; background: #fffdf7;
+            padding: 10px 40px; border-top: 1px solid #dcd4bc; background: #fff;
             font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; color: #101d33;
         }
         #qnaPdfPrintArea .pdf-watermark { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; display: flex; align-items: center; justify-content: center; }
@@ -4252,36 +4252,35 @@
             transform: rotate(-30deg); white-space: nowrap; display: block;
         }
         #qnaPdfPrintArea .pdf-q-list { position: relative; z-index: 1; }
-        #qnaPdfPrintArea .pdf-q-block { margin-bottom: 22px; }
+        #qnaPdfPrintArea .pdf-q-block { margin-bottom: 18px; }
         #qnaPdfPrintArea .pdf-q-top { display: flex; gap: 14px; }
         #qnaPdfPrintArea .pdf-q-num {
-            flex: 0 0 30px; height: 30px; border-radius: 50%; border: 1.5px solid #101d33;
+            flex: 0 0 34px; height: 34px; border-radius: 50%; border: 1.5px solid #101d33;
             display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace;
-            font-weight: 600; font-size: 13px; color: #101d33;
+            font-weight: 600; font-size: 15px; color: #101d33;
         }
         #qnaPdfPrintArea .pdf-q-body { flex: 1; min-width: 0; }
-        #qnaPdfPrintArea .pdf-q-text { font-size: 17px; font-weight: 600; color: #1c1a15; line-height: 1.5; margin-bottom: 9px; }
+        #qnaPdfPrintArea .pdf-q-text { font-size: 17.5px; font-weight: 600; color: #1c1a15; line-height: 1.55; margin-bottom: 12px; }
         #qnaPdfPrintArea .pdf-q-text.as, #qnaPdfPrintArea .pdf-q-text-as { font-family: 'Noto Sans Bengali', sans-serif; font-weight: 500; }
-        #qnaPdfPrintArea .pdf-q-img { width: auto; height: 230px; max-width: 100%; object-fit: contain; display: block; margin: 4px 0 12px; border: 1px solid #dcd4bc; border-radius: 4px; background: #fff; }
-        #qnaPdfPrintArea .pdf-q-options { list-style: none; margin: 0 0 4px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
-        #qnaPdfPrintArea .pdf-q-opt { display: flex; gap: 10px; font-size: 17px; font-weight: 700; line-height: 1.45; color: #1c1a15; align-items: flex-start; }
-        #qnaPdfPrintArea .pdf-q-opt.as, #qnaPdfPrintArea .pdf-q-opt-as, #qnaPdfPrintArea .pdf-opt-txt.as { font-family: 'Noto Sans Bengali', sans-serif; font-weight: 700; }
-        #qnaPdfPrintArea .pdf-opt-txt { font-size: 17px; font-weight: 700; }
+        #qnaPdfPrintArea .pdf-q-img { width: auto; max-width: 260px; height: 170px; object-fit: contain; display: block; margin: 6px 0 14px; border: 1px solid #dcd4bc; border-radius: 4px; background: #fff; }
+        #qnaPdfPrintArea .pdf-q-options { list-style: none; margin: 0 0 4px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+        #qnaPdfPrintArea .pdf-q-opt { display: flex; gap: 9px; font-size: 15.5px; font-weight: 400; line-height: 1.4; color: #1c1a15; align-items: flex-start; }
+        #qnaPdfPrintArea .pdf-q-opt.as, #qnaPdfPrintArea .pdf-q-opt-as, #qnaPdfPrintArea .pdf-opt-txt.as { font-family: 'Noto Sans Bengali', sans-serif; }
         #qnaPdfPrintArea .pdf-opt-tag {
-            flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 15px;
-            width: 28px; height: 28px; border-radius: 7px; border: 1.5px solid #8a8168;
-            display: flex; align-items: center; justify-content: center; color: #1c1a15;
+            flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 13px;
+            width: 23px; height: 23px; border-radius: 5px; border: 1px solid #dcd4bc;
+            display: flex; align-items: center; justify-content: center; color: #5b5646;
         }
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-tag { background: #2f6b45; border-color: #2f6b45; color: #fff; }
-        #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 700; }
-        #qnaPdfPrintArea .pdf-answer-box { margin-top: 4px; font-size: 17px; color: #2f6b45; font-weight: 600; line-height: 1.45; }
+        #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 600; }
+        #qnaPdfPrintArea .pdf-answer-box { margin-top: 4px; font-size: 15.5px; color: #2f6b45; font-weight: 600; line-height: 1.45; }
         #qnaPdfPrintArea .pdf-answer-box.as { font-family: 'Noto Sans Bengali', sans-serif; }
         #qnaPdfPrintArea .pdf-q-hint {
             margin-top: 9px; font-size: 14.5px; color: #1c1a15; font-weight: 600; background: #fff8e6; border-left: 4px solid #c9a227;
             padding: 8px 13px; border-radius: 0 6px 6px 0; line-height: 1.45;
         }
         #qnaPdfPrintArea .pdf-q-hint.as { font-family: 'Noto Sans Bengali', sans-serif; }
-        #qnaPdfPrintArea .pdf-rule-line { display: none; }
+        #qnaPdfPrintArea .pdf-rule-line { border: none; border-top: 1px dashed #dcd4bc; margin: 28px 0 0; }
         /* Answer-key section (admin-only "All options + answer key" mode) —
            a compact grid at the end of the PDF instead of marking the
            correct option on the question itself. */
@@ -15375,7 +15374,7 @@
                             .map(v => `<span class="pdf-opt-txt${v.as ? ' as' : ''}">${pdfEsc(v.text)}</span>`)
                             .join('<br>');
                         html += `<li class="pdf-q-opt${correct ? ' correct' : ''}">
-                            <span class="pdf-opt-tag">${oi + 1}</span>
+                            <span class="pdf-opt-tag">${String.fromCharCode(65 + oi)}</span>
                             ${optHtml}
                         </li>`;
                     });
@@ -15393,7 +15392,7 @@
             } else {
                 html += `<div class="pdf-answer-box">Answer: ${pdfLangVariants(opts.lang, q.answer_en, q.answer_as).map(v => pdfEsc(v.text)).join(' / ')}</div>`;
             }
-            html += `</div></div></div>`;
+            html += `</div></div><hr class="pdf-rule-line"></div>`;
             return html;
         }
 
@@ -15463,9 +15462,10 @@
             const hasAnyHint = isTest && questions.some(q => q.hint_en || q.hint_as);
 
             // Students get a simple two-choice picker. Whichever language
-            // they tap downloads "All options + hints" (hints only when the
-            // test actually has some) — the exact version admin pre-caches
-            // on Drive, so it's an instant download.
+            // they tap downloads "All options" (no hints) — the exact
+            // version admin pre-caches on Drive, so it's an instant
+            // download. If it isn't cached yet it gets built once, saved
+            // to Drive, and every later student gets the saved copy.
             if (isTest && currentUser?.role !== 'admin') {
                 if (!isBilingual) { submitStudentPdf('en'); return; }
                 openModal(`
@@ -15539,10 +15539,8 @@
         }
 
         function submitStudentPdf(lang) {
-            const test = pdfPromptSource && pdfPromptSource.data;
-            const hints = !!(test && (test.questions || []).some(q => q.hint_en || q.hint_as));
             closeModal();
-            printQnaPdf(pdfPromptSource, { lang, mode: 'options', hints });
+            printQnaPdf(pdfPromptSource, { lang, mode: 'options', hints: false });
         }
 
         function submitQnaPdfOptions() {
@@ -15714,6 +15712,143 @@
             ]);
         }
 
+        // ================================================================
+        // Compact PDF output.
+        //
+        // Why the old PDFs were 10-16 MB: every page was a full-colour
+        // JPEG (~150 KB each). A page of black text on white has only a
+        // few dozen distinct colours, so each page is instead reduced to
+        // a small palette and stored losslessly with Flate — about a third
+        // of the size, and the text stays razor sharp. The PDF container
+        // itself is written directly below (a tiny writer; jsPDF is kept
+        // only as a fallback for very old browsers).
+        // ================================================================
+        async function qnaDeflate(bytes) {
+            const cs = new CompressionStream('deflate');
+            const stream = new Blob([bytes]).stream().pipeThrough(cs);
+            return new Uint8Array(await new Response(stream).arrayBuffer());
+        }
+
+        // Median-cut colour reduction on a 15-bit histogram. Returns
+        // { palette: Uint8Array(RGB * n), indices: Uint8Array(w*h), count }.
+        function qnaQuantizeImageData(imgData, maxColors) {
+            const data = imgData.data, n = imgData.width * imgData.height;
+            const hist = new Uint32Array(32768), sr = new Uint32Array(32768), sg = new Uint32Array(32768), sb = new Uint32Array(32768);
+            for (let i = 0, p = 0; i < n; i++, p += 4) {
+                const r = data[p], g = data[p + 1], b = data[p + 2];
+                const k = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+                hist[k]++; sr[k] += r; sg[k] += g; sb[k] += b;
+            }
+            const bins = [];
+            for (let k = 0; k < 32768; k++) if (hist[k]) bins.push(k);
+            const chan = (k, c) => c === 0 ? (k >> 10) & 31 : (c === 1 ? (k >> 5) & 31 : k & 31);
+            function info(list) {
+                const mn = [31, 31, 31], mx = [0, 0, 0]; let pop = 0;
+                for (let j = 0; j < list.length; j++) {
+                    const k = list[j];
+                    for (let c = 0; c < 3; c++) { const v = chan(k, c); if (v < mn[c]) mn[c] = v; if (v > mx[c]) mx[c] = v; }
+                    pop += hist[k];
+                }
+                return { list, mn, mx, pop, range: Math.max(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) };
+            }
+            const boxes = [info(bins)];
+            while (boxes.length < maxColors) {
+                let bi = -1, best = 0;
+                for (let i = 0; i < boxes.length; i++) {
+                    const b = boxes[i];
+                    if (b.list.length < 2 || b.range === 0) continue;
+                    // range * sqrt(pop): rare-but-different colours (a faint
+                    // watermark, a green tick) still get their own entry
+                    // instead of being swallowed by the huge white box.
+                    const score = b.range * Math.sqrt(b.pop);
+                    if (score > best) { best = score; bi = i; }
+                }
+                if (bi < 0) break;
+                const b = boxes[bi];
+                let ch = 0;
+                for (let c = 1; c < 3; c++) if (b.mx[c] - b.mn[c] > b.mx[ch] - b.mn[ch]) ch = c;
+                b.list.sort((x, y) => chan(x, ch) - chan(y, ch));
+                let acc = 0, cut = 1; const half = b.pop / 2;
+                for (let j = 0; j < b.list.length - 1; j++) { acc += hist[b.list[j]]; cut = j + 1; if (acc >= half) break; }
+                boxes.splice(bi, 1, info(b.list.slice(0, cut)), info(b.list.slice(cut)));
+            }
+            const count = boxes.length;
+            const palette = new Uint8Array(count * 3);
+            const pr = new Float64Array(count), pg = new Float64Array(count), pb = new Float64Array(count);
+            boxes.forEach((b, i) => {
+                let r = 0, g = 0, bl = 0, pop = 0;
+                for (const k of b.list) { r += sr[k]; g += sg[k]; bl += sb[k]; pop += hist[k]; }
+                pr[i] = r / pop; pg[i] = g / pop; pb[i] = bl / pop;
+                palette[i * 3] = Math.round(pr[i]); palette[i * 3 + 1] = Math.round(pg[i]); palette[i * 3 + 2] = Math.round(pb[i]);
+            });
+            const lut = new Uint8Array(32768);
+            for (const k of bins) {
+                const r = sr[k] / hist[k], g = sg[k] / hist[k], b = sb[k] / hist[k];
+                let bestI = 0, bestD = Infinity;
+                for (let i = 0; i < count; i++) {
+                    const d = (r - pr[i]) * (r - pr[i]) + (g - pg[i]) * (g - pg[i]) + (b - pb[i]) * (b - pb[i]);
+                    if (d < bestD) { bestD = d; bestI = i; }
+                }
+                lut[k] = bestI;
+            }
+            const indices = new Uint8Array(n);
+            for (let i = 0, p = 0; i < n; i++, p += 4) {
+                indices[i] = lut[((data[p] >> 3) << 10) | ((data[p + 1] >> 3) << 5) | (data[p + 2] >> 3)];
+            }
+            return { palette, indices, count };
+        }
+
+        class QnaPdfWriter {
+            constructor() {
+                this.parts = []; this.len = 0; this.offsets = []; this.nextId = 3; this.pageIds = [];
+                this.enc = new TextEncoder();
+                this._bytes(new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52, 10, 37, 0xE2, 0xE3, 0xCF, 0xD3, 10]));
+            }
+            _bytes(u8) { this.parts.push(u8); this.len += u8.length; }
+            _str(s) { this._bytes(this.enc.encode(s)); }
+            _obj(id, body) { this.offsets[id] = this.len; this._str(id + ' 0 obj\n' + body + '\nendobj\n'); }
+            _objStream(id, dict, u8) {
+                this.offsets[id] = this.len;
+                this._str(id + ' 0 obj\n<< ' + dict + ' /Length ' + u8.length + ' >>\nstream\n');
+                this._bytes(u8);
+                this._str('\nendstream\nendobj\n');
+            }
+            // wPx/hPx: page size in CSS px. img: {w,h,palette,flate}. links: [{x,y,w,h,url}] in CSS px, top-left origin.
+            addPage(wPx, hPx, img, links) {
+                const W = wPx * 0.75, H = hPx * 0.75;
+                const imgId = this.nextId++, contId = this.nextId++;
+                let hex = '';
+                for (let i = 0; i < img.palette.length; i++) hex += (img.palette[i] < 16 ? '0' : '') + img.palette[i].toString(16);
+                this._objStream(imgId,
+                    '/Type /XObject /Subtype /Image /Width ' + img.w + ' /Height ' + img.h +
+                    ' /ColorSpace [/Indexed /DeviceRGB ' + (img.palette.length / 3 - 1) + ' <' + hex + '>] /BitsPerComponent 8 /Filter /FlateDecode',
+                    img.flate);
+                this._objStream(contId, '', this.enc.encode('q ' + W.toFixed(2) + ' 0 0 ' + H.toFixed(2) + ' 0 0 cm /Im0 Do Q'));
+                const annotIds = [];
+                (links || []).forEach(l => {
+                    const id = this.nextId++; annotIds.push(id);
+                    const x1 = l.x * 0.75, x2 = (l.x + l.w) * 0.75, y1 = H - (l.y + l.h) * 0.75, y2 = H - l.y * 0.75;
+                    const url = String(l.url).replace(/[\\()]/g, '');
+                    this._obj(id, '<< /Type /Annot /Subtype /Link /Rect [' + [x1, y1, x2, y2].map(v => v.toFixed(2)).join(' ') +
+                        '] /Border [0 0 0] /A << /S /URI /URI (' + url + ') >> >>');
+                });
+                const pageId = this.nextId++;
+                this._obj(pageId, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + W.toFixed(2) + ' ' + H.toFixed(2) + '] ' +
+                    '/Resources << /XObject << /Im0 ' + imgId + ' 0 R >> >> /Contents ' + contId + ' 0 R' +
+                    (annotIds.length ? ' /Annots [' + annotIds.map(i => i + ' 0 R').join(' ') + ']' : '') + ' >>');
+                this.pageIds.push(pageId);
+            }
+            finish() {
+                this._obj(2, '<< /Type /Pages /Kids [' + this.pageIds.map(i => i + ' 0 R').join(' ') + '] /Count ' + this.pageIds.length + ' >>');
+                this._obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+                const xrefAt = this.len, size = this.nextId;
+                let x = 'xref\n0 ' + size + '\n0000000000 65535 f \n';
+                for (let i = 1; i < size; i++) x += String(this.offsets[i] || 0).padStart(10, '0') + ' 00000 n \n';
+                this._str(x + 'trailer\n<< /Size ' + size + ' /Root 1 0 R >>\nstartxref\n' + xrefAt + '\n%%EOF\n');
+                return new Blob(this.parts, { type: 'application/pdf' });
+            }
+        }
+
         async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true, persistCache = true, folderPath = null) {
             const isTest = source.type === 'test';
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
@@ -15763,7 +15898,7 @@
                 // padded width made them wrap less than they do on the real
                 // page — heights came out too small, so questions overflowed
                 // the bottom of a page and got cut off mid-way.
-                root.innerHTML = '<div class="pdf-page pdf-content-page">' + buildPdfPageHeaderHtml(title) +
+                root.innerHTML = '<div class="pdf-page pdf-content-page">' +
                     '<div class="pdf-doc-body"></div>' + buildPdfPageFooterHtml() + '</div>';
                 const bodyEl = root.querySelector('.pdf-doc-body');
                 const cs = idoc.defaultView.getComputedStyle(bodyEl);
@@ -15780,9 +15915,9 @@
                 questions.forEach((q, i) => {
                     const blockHtml = buildPdfQBlockHtml(q, i, isTest, opts);
                     measure.innerHTML = blockHtml;
-                    // +22 accounts for .pdf-q-block's own margin-bottom, which
+                    // +18 accounts for .pdf-q-block's own margin-bottom, which
                     // offsetHeight on the block itself doesn't include.
-                    const blockH = measure.firstElementChild.offsetHeight + 22;
+                    const blockH = measure.firstElementChild.offsetHeight + 18;
                     if (currentHeight + blockH > maxListHeight && pages[pages.length - 1].length > 0) {
                         pages.push([]);
                         currentHeight = 0;
@@ -15803,10 +15938,9 @@
                 const pageHtmls = [buildPdfCoverPageHtml(title, questions.length)];
                 pages.forEach((blocks, pageIdx) => {
                     pageHtmls.push(`<div class="pdf-page pdf-content-page">
-                        ${pageIdx === 0 ? buildPdfPageHeaderHtml(title) : ''}
                         <div class="pdf-doc-body">
                             <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
-                            <div class="pdf-q-list">${blocks.join('')}</div>
+                            <div class="pdf-q-list">${blocks.map((bk, bi) => (pageIdx === pages.length - 1 && bi === blocks.length - 1) ? bk.replace('<hr class="pdf-rule-line">', '') : bk).join('')}</div>
                         </div>
                         ${(pageIdx === pages.length - 1 && !hasAnswerKey) ? buildPdfPageFooterHtml() : ''}
                     </div>`);
@@ -15834,7 +15968,6 @@
                     }
                     akPages.forEach((items, pageIdx) => {
                         pageHtmls.push(`<div class="pdf-page pdf-content-page">
-                            ${pageIdx === 0 ? buildPdfPageHeaderHtml(title) : ''}
                             <div class="pdf-doc-body">
                                 <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
                                 ${pageIdx === 0 ? '<div class="pdf-ak-heading">Answer Key</div>' : ''}
@@ -15847,9 +15980,14 @@
 
                 const { jsPDF } = window.jspdf;
                 let pdf = null;
+                // Compact path (palette + Flate, see QnaPdfWriter) whenever
+                // the browser can deflate; otherwise the old JPEG path,
+                // at a lower quality so it is still not enormous.
+                const compact = typeof CompressionStream === 'function';
+                const writer = compact ? new QnaPdfWriter() : null;
                 // iPhones cap total canvas memory hard; a lower scale keeps
                 // every page comfortably under it.
-                const scale = isIOS() ? 1.2 : 1.5;
+                const scale = isIOS() ? 1.25 : 1.5;
                 const total = pageHtmls.length;
                 for (let i = 0; i < total; i++) {
                     if (!deliverLocally && bulkPdfCancelRequested) throw new Error('__cancelled__');
@@ -15857,44 +15995,47 @@
                     root.innerHTML = pageHtmls[i];
                     await waitForImages(root, 5000);
                     const pageEl = root.firstElementChild;
-                    // Almost always exactly 1123 (the pagination pass above
-                    // already packs questions to fit that). Only a single
-                    // question whose own text+options+hint — doubled up in
-                    // Bilingual mode — genuinely doesn't fit in one page's
-                    // budget ends up taller than that, and .pdf-page is
-                    // min-height, not a hard cap, so it's free to actually
-                    // BE taller here rather than getting silently cropped.
-                    // Every page's own real height drives its own PDF page
-                    // size, instead of assuming a fixed 1123 for all of them.
+                    // Almost always exactly 1123; only a single question
+                    // that genuinely doesn't fit makes its own page taller,
+                    // so every page's real height drives its own PDF page.
                     const pageH = Math.ceil(pageEl.getBoundingClientRect().height);
                     const canvas = await html2canvas(pageEl, {
-                        scale, useCORS: true, backgroundColor: '#fffdf7', logging: false,
+                        scale, useCORS: true, backgroundColor: '#ffffff', logging: false,
                         windowWidth: 794, windowHeight: pageH
                     });
-                    const imgData = canvas.toDataURL('image/jpeg', 0.82);
-                    // Setting size to 0 is what actually frees a canvas's
-                    // memory on iOS Safari — without it, 46 of them pile up.
-                    canvas.width = 0; canvas.height = 0;
-                    if (!pdf) {
-                        pdf = new jsPDF({ unit: 'px', format: [794, pageH], hotfixes: ['px_scaling'] });
-                    } else {
-                        pdf.addPage([794, pageH], 'p');
-                    }
-                    pdf.addImage(imgData, 'JPEG', 0, 0, 794, pageH, undefined, 'FAST');
-                    // html2canvas only paints pixels, so a link in the page
-                    // HTML would be dead in the PDF. Lay an invisible link
-                    // rectangle over each [data-pdf-link] element instead.
+                    const pr = pageEl.getBoundingClientRect();
+                    const links = [];
                     try {
-                        const pr = pageEl.getBoundingClientRect();
                         pageEl.querySelectorAll('[data-pdf-link]').forEach(el => {
                             const r = el.getBoundingClientRect();
-                            pdf.link(r.left - pr.left, r.top - pr.top, r.width, r.height, { url: el.getAttribute('data-pdf-link') });
+                            links.push({ x: r.left - pr.left, y: r.top - pr.top, w: r.width, h: r.height, url: el.getAttribute('data-pdf-link') });
                         });
                     } catch (_) {}
+                    if (compact) {
+                        const cw = canvas.width, ch = canvas.height;
+                        const imgData = canvas.getContext('2d').getImageData(0, 0, cw, ch);
+                        // The cover (gold logo) and any page with a photo
+                        // need a richer palette than plain text pages.
+                        const rich = i === 0 || !!pageEl.querySelector('.pdf-q-img');
+                        const q = qnaQuantizeImageData(imgData, rich ? 256 : 40);
+                        canvas.width = 0; canvas.height = 0;
+                        const flate = await qnaDeflate(q.indices);
+                        writer.addPage(794, pageH, { w: cw, h: ch, palette: q.palette, flate }, links);
+                    } else {
+                        const imgData = canvas.toDataURL('image/jpeg', 0.6);
+                        canvas.width = 0; canvas.height = 0;
+                        if (!pdf) {
+                            pdf = new jsPDF({ unit: 'px', format: [794, pageH], hotfixes: ['px_scaling'] });
+                        } else {
+                            pdf.addPage([794, pageH], 'p');
+                        }
+                        pdf.addImage(imgData, 'JPEG', 0, 0, 794, pageH, undefined, 'FAST');
+                        links.forEach(l => pdf.link(l.x, l.y, l.w, l.h, { url: l.url }));
+                    }
                     // Yield so the progress toast can actually paint.
                     await new Promise(r => setTimeout(r, 0));
                 }
-                blob = pdf.output('blob');
+                blob = compact ? writer.finish() : pdf.output('blob');
             } catch (err) {
                 hidePdfProgress();
                 if (err && err.message === '__cancelled__') return false;
@@ -15909,98 +16050,83 @@
             // upload entirely instead of making the admin wait for it.
             if (!deliverLocally && bulkPdfCancelRequested) { hidePdfProgress(); return false; }
 
-            // deliverLocally is false only from the per-test "Upload
-            // PDF" / auto-regenerate tool (see regenerateTestQnaPdfs) —
-            // that's purely about filling the Drive cache for everyone else,
-            // not about handing THIS device a file for every single
-            // combination it generates, and the per-combo toasts below
-            // would otherwise spam a burst of up to 3-digit count.
-            if (deliverLocally) {
-                // Deliver to THIS device right away from the blob already
-                // in hand — no reason to wait on a Drive round-trip just
-                // to get the file the person who triggered generation
-                // actually asked for. iOS can't reliably save a blob: URL
-                // even here, so that one device does have to wait on the
-                // Drive upload below before it has anything it can
-                // actually save.
-                if (!isIOS()) {
-                    hidePdfProgress();
-                    downloadBlobToDevice(blob, safeName);
-                    showToast('✅ PDF downloaded', 'success');
-                }
-            }
-
-            // uploadFileToDrive authenticates as the logged-in admin
-            // (adminCreds) — a student's session has no credentials that
-            // can write to Drive, so caching only ever happens from an
-            // admin's own device. Every other device (student or admin)
-            // still benefits from a cache once one exists, via the
-            // cachedFileId check in printQnaPdf above.
-            let cacheWriteOk = false;
-            if (cacheKey && currentUser && currentUser.role === 'admin') {
+            // Save a copy to Drive BEFORE handing the file over, so the next
+            // person (any student) gets the instant cached download. Admins
+            // write through their own credentials; a logged-in student goes
+            // through the server's saveStudentQnaPdf action, which verifies
+            // their account and only accepts the two student PDF variants.
+            // deliverLocally is false only for the per-test "Upload PDF"
+            // tool, which just fills the cache and downloads nothing.
+            let cacheWriteOk = false, savedFileId = null;
+            const isAdminUser = currentUser && currentUser.role === 'admin';
+            const isStudentUser = currentUser && currentUser.role !== 'admin' && studentCreds && studentCreds.identifier;
+            if (cacheKey && (isAdminUser || isStudentUser)) {
                 try {
-                    if (deliverLocally && isIOS()) showPdfProgress('Uploading...');
+                    if (deliverLocally) showPdfProgress('Saving a copy...');
                     const base64 = await blobToBase64(blob);
-                    // A caller that already knows the folder path (the
-                    // per-test regenerate flow) passes it; an ordinary
-                    // single Download PDF click doesn't bother, so it's
-                    // worked out here instead — either way every Q&A PDF
-                    // ends up nested under the mock's own folder
-                    // breadcrumb in Drive, never a flat pile.
                     const uploadFolderPath = folderPath || (isTest ? qnaPdfFolderPathNames(source.data) : null);
-                    // Extra time over uploadFileToDrive's own default: a
-                    // 40+ page PDF is a few MB even compressed, and as
-                    // base64 that's ~37% bigger again — the default
-                    // timeout was tuned for material photos, not this.
-                    const driveRef = await uploadFileToDrive(base64, safeName + '.pdf', 'application/pdf', 'qnaPdf', 90000, uploadFolderPath);
-                    const fileId = driveRef.replace(/^drive:/, '');
+                    if (isAdminUser) {
+                        const driveRef = await uploadFileToDrive(base64, safeName + '.pdf', 'application/pdf', 'qnaPdf', 120000, uploadFolderPath);
+                        savedFileId = driveRef.replace(/^drive:/, '');
+                    } else {
+                        const res = await apiPost({
+                            action: 'saveStudentQnaPdf',
+                            identifier: studentCreds.identifier,
+                            password: studentCreds.password,
+                            testId: source.data.id,
+                            cacheKey: cacheKey,
+                            fileBase64: base64.split(',')[1] || base64,
+                            fileName: safeName + '.pdf',
+                            folderPath: uploadFolderPath || undefined
+                        }, 120000);
+                        if (!res.success) throw new Error(res.error || 'Save failed');
+                        savedFileId = res.fileId;
+                    }
                     const store = getStore();
                     const t = store.tests.find(x => x.id === source.data.id);
                     if (t) {
                         t.qnaPdfDrive = t.qnaPdfDrive || {};
-                        t.qnaPdfDrive[cacheKey] = fileId;
-                        // persistCache=false is the per-test "Upload PDF"
-                        // / auto-regenerate tool (see regenerateTestQnaPdfs): it sets
-                        // this in memory so THIS run's own "already
-                        // cached?" checks on later combos see it right
-                        // away, but defers the actual saveStore() to its
-                        // own batched flush. saveStore() triggers a full
-                        // pull-merge-rewrite sync of the ENTIRE test bank
-                        // — calling it after every single one of a
-                        // hundred-plus generated PDFs was slow enough to
-                        // start hitting Google's write-rate limits mid-run,
-                        // and a sync that failed partway through meant
-                        // whatever had already been generated never
-                        // actually reached the Sheet — so stopping and
-                        // resuming the bulk run looked like it "forgot"
-                        // everything already done, even though all those
-                        // files really were sitting in Drive the whole
-                        // time (just orphaned, not referenced by any
-                        // test). One normal single-test download is a
-                        // single cache entry either way, so this costs it
-                        // nothing.
-                        if (persistCache) saveStore(store);
+                        t.qnaPdfDrive[cacheKey] = savedFileId;
+                        // persistCache=false is the per-test "Upload PDF" /
+                        // auto-regenerate tool: it defers the (slow, full
+                        // test-bank) saveStore() to its own batched flush.
+                        // Students never write the test bank; the server
+                        // already recorded the file against the test.
+                        if (isAdminUser && persistCache) saveStore(store);
+                    }
+                    if (source.data) {
+                        source.data.qnaPdfDrive = source.data.qnaPdfDrive || {};
+                        source.data.qnaPdfDrive[cacheKey] = savedFileId;
                     }
                     cacheWriteOk = true;
-                    if (deliverLocally && isIOS()) {
+                } catch (err) {
+                    console.error('PDF cache save failed', err);
+                }
+            }
+
+            if (deliverLocally) {
+                hidePdfProgress();
+                if (!isIOS()) {
+                    // Android/desktop can save the blob already in hand,
+                    // whether or not the Drive copy worked.
+                    downloadBlobToDevice(blob, safeName);
+                    showToast('✅ PDF downloaded', 'success');
+                } else if (savedFileId) {
+                    // iOS can't reliably save a blob: URL — it downloads
+                    // the copy that was just saved to Drive instead.
+                    try {
                         showPdfProgress('Downloading...');
-                        await downloadFileIdToDevice(fileId, safeName);
+                        await downloadFileIdToDevice(savedFileId, safeName);
                         hidePdfProgress();
                         showToast('✅ PDF downloaded', 'success');
-                    }
-                } catch (err) {
-                    console.error('PDF cache upload failed', err);
-                    if (deliverLocally && isIOS()) {
+                    } catch (err) {
+                        console.error(err);
                         hidePdfProgress();
-                        showToast('Could not save this PDF on this device — try again on a laptop or Android phone', 'error');
+                        showToast('Could not download the PDF — please try again', 'error');
                     }
+                } else {
+                    showToast('Could not save this PDF right now — please try again in a moment', 'error');
                 }
-            } else if (deliverLocally && isIOS()) {
-                // Non-admin on iOS with no cached copy yet — there's
-                // nothing that can be handed to Safari here that it will
-                // reliably let the person save.
-                hidePdfProgress();
-                showToast("This PDF hasn't been generated yet — ask your teacher to open Download PDF once first", 'error');
             }
             hidePdfProgress();
             return deliverLocally ? true : cacheWriteOk;
@@ -16032,10 +16158,10 @@
         // Only the two versions students can ask for: English and
         // Assamese, each with All options (+ hints when the test has any).
         function qnaPdfCombosForTest(test) {
-            const hints = (test.questions || []).some(q => q.hint_en || q.hint_as);
+            // Hints are deliberately never part of the student/cached PDFs.
             return [
-                { lang: 'en', mode: 'options', hints },
-                { lang: 'as', mode: 'options', hints }
+                { lang: 'en', mode: 'options', hints: false },
+                { lang: 'as', mode: 'options', hints: false }
             ];
         }
 
@@ -16095,7 +16221,7 @@
             const hasExisting = test.qnaPdfDrive && Object.keys(test.qnaPdfDrive).length > 0;
             const msg = hasExisting
                 ? `Re-generate the English and Assamese PDFs of "${test.title}"? The ${Object.keys(test.qnaPdfDrive).length} already-cached version(s) will be deleted from Drive and replaced with fresh ones built from the test's current questions.`
-                : `Generate and cache the two student PDFs of "${test.title}" — English and Assamese, each with all options + hints?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
+                : `Generate and cache the two student PDFs of "${test.title}" — English and Assamese, each with all options (no hints)?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
             if (!confirm(msg)) return;
             regenerateTestQnaPdfs(testId, { manual: true });
         }
