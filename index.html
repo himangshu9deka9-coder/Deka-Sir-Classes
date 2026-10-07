@@ -4190,7 +4190,7 @@
            file Blob downloaded via <a download> doesn't depend on any of
            that — it's the same mechanism as clicking any file link.
            ================================================================ */
-        #qnaPdfPrintArea { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; background: #fff; color: #1c1a15; }
+        #qnaPdfPrintArea { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; background: #fff; color: #1c1a15; font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
         #qnaPdfPrintArea .pdf-page {
             background: #fff; width: 794px; min-height: 1123px; position: relative;
             display: flex; flex-direction: column; box-sizing: border-box;
@@ -4271,7 +4271,7 @@
             width: 23px; height: 23px; border-radius: 5px; border: 1px solid #dcd4bc;
             display: flex; align-items: center; justify-content: center; color: #5b5646;
         }
-        #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-tag { background: #2f6b45; border-color: #2f6b45; color: #fff; }
+        #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-tag { background: #fff; border: 1.5px solid #2f6b45; color: #a9a9a9; }
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 600; }
         #qnaPdfPrintArea .pdf-answer-box { margin-top: 4px; font-size: 15.5px; color: #2f6b45; font-weight: 600; line-height: 1.45; }
         #qnaPdfPrintArea .pdf-answer-box.as { font-family: 'Noto Sans Bengali', sans-serif; }
@@ -15889,6 +15889,16 @@
                 const fontLinkLoaded = new Promise(res => { fontLink.onload = res; fontLink.onerror = res; setTimeout(res, 2500); });
                 idoc.head.appendChild(fontLink);
                 await fontLinkLoaded;
+                // Fonts only download once something uses them — force the
+                // ones the PDF needs, so measuring and drawing never happen
+                // with a fallback font.
+                try {
+                    await Promise.all([
+                        '400 16px Inter', '500 16px Inter', '600 16px Inter', '700 16px Inter', '800 16px Inter',
+                        '400 16px "Noto Sans Bengali"', '500 16px "Noto Sans Bengali"', '600 16px "Noto Sans Bengali"', '700 16px "Noto Sans Bengali"',
+                        '600 13px "JetBrains Mono"', '500 13px "JetBrains Mono"', '700 16px "Noto Serif"'
+                    ].map(f => idoc.fonts.load(f, 'AaBb1 অআকখ').catch(() => {})));
+                } catch (_) {}
 
                 const root = idoc.getElementById('qnaPdfPrintArea');
 
