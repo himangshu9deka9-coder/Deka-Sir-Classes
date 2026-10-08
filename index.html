@@ -1268,6 +1268,35 @@
         /* ============================================================
         STATS
         ============================================================ */
+        .lifetime-banner {
+            position: relative; overflow: hidden; cursor: pointer; margin: 4px 0 18px;
+            border-radius: var(--radius-lg, 18px); padding: 16px 16px;
+            background: linear-gradient(120deg, #f59e0b, #ef4444 55%, #ec4899);
+            color: #fff; box-shadow: 0 10px 30px rgba(239, 68, 68, 0.35);
+            animation: lifetimePulse 2.4s ease-in-out infinite;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .lifetime-banner:active { transform: scale(0.985); }
+        .lifetime-shine {
+            position: absolute; top: 0; bottom: 0; width: 45%; left: -60%;
+            background: linear-gradient(100deg, transparent, rgba(255,255,255,0.55), transparent);
+            transform: skewX(-20deg); animation: lifetimeShine 3.2s ease-in-out infinite; pointer-events: none;
+        }
+        .lifetime-inner { position: relative; display: flex; align-items: center; gap: 12px; }
+        .lifetime-crown {
+            flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.22); font-size: 20px; animation: lifetimeBounce 1.6s ease-in-out infinite;
+        }
+        .lifetime-text { flex: 1; min-width: 0; }
+        .lifetime-title { font-weight: 800; font-size: 14px; line-height: 1.3; letter-spacing: .01em; }
+        .lifetime-sub { margin-top: 3px; font-weight: 700; font-size: 11px; opacity: .92; letter-spacing: .03em; }
+        .lifetime-go { flex: 0 0 auto; font-size: 16px; opacity: .9; animation: lifetimeNudge 1.2s ease-in-out infinite; }
+        @keyframes lifetimePulse { 0%, 100% { box-shadow: 0 10px 30px rgba(239, 68, 68, 0.35); } 50% { box-shadow: 0 12px 40px rgba(245, 158, 11, 0.6); } }
+        @keyframes lifetimeShine { 0% { left: -60%; } 60%, 100% { left: 130%; } }
+        @keyframes lifetimeBounce { 0%, 100% { transform: translateY(0) rotate(-6deg); } 50% { transform: translateY(-4px) rotate(6deg); } }
+        @keyframes lifetimeNudge { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(4px); } }
+        .featured-slide-actions { display: flex; gap: 8px; padding: 0 12px 12px; flex-wrap: wrap; }
+        .featured-slide-actions .btn { flex: 1 1 0; justify-content: center; white-space: nowrap; }
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -4449,7 +4478,6 @@
         <div class="sidebar-nav">
             <div class="nav-label">Main</div>
             <a class="active" data-page="dashboard"><i class="fas fa-chart-pie"></i> Dashboard</a>
-            <a data-page="materials"><i class="fas fa-folder-open"></i> Study Material</a>
             <a data-page="tests"><i class="fas fa-pencil-alt"></i> Mock Tests</a>
             <a data-page="recorded"><i class="fas fa-video"></i> Recorded Classes</a>
             <a data-page="courses"><i class="fas fa-graduation-cap"></i> Courses</a>
@@ -4469,7 +4497,6 @@
     <nav class="bottom-nav" id="bottomNav">
         <a class="active" data-page="dashboard"><i class="fas fa-chart-pie"></i> Dashboard</a>
         <a data-page="tests"><i class="fas fa-pencil-alt"></i> Mock</a>
-        <a data-page="materials"><i class="fas fa-folder-open"></i> Material</a>
         <a data-page="courses"><i class="fas fa-graduation-cap"></i> Course</a>
         <a data-page="recorded"><i class="fas fa-video"></i> Recorded</a>
     </nav>
@@ -4562,16 +4589,23 @@
             <div class="dashboard-entrance">
                 <div class="dash-search-wrap">
                     <i class="fas fa-search dash-search-icon"></i>
-                    <input type="text" class="dash-search-bar" id="dashboardSearch" placeholder="Search mock tests & study material..." oninput="handleDashboardSearch(this.value)" />
+                    <input type="text" class="dash-search-bar" id="dashboardSearch" placeholder="Search mock tests..." oninput="handleDashboardSearch(this.value)" />
                 </div>
                 <div id="dashboardSearchResults" style="display:none;"></div>
 
                 <div id="dashboardMainContent">
-                <div class="stats-grid" id="statsGrid">
-                    <div class="stat-card"><div class="stat-icon"><i class="fas fa-file-pdf"></i></div><div class="stat-number" id="statMaterials">0</div><div class="stat-label">Materials</div></div>
-                    <div class="stat-card"><div class="stat-icon"><i class="fas fa-tasks"></i></div><div class="stat-number" id="statTests">0</div><div class="stat-label">Tests</div></div>
-                    <div class="stat-card"><div class="stat-icon"><i class="fas fa-users"></i></div><div class="stat-number" id="statStudents">0</div><div class="stat-label">Students</div></div>
-                    <div class="stat-card"><div class="stat-icon"><i class="fas fa-check-circle"></i></div><div class="stat-number" id="statAttempts">0</div><div class="stat-label">Attempts</div></div>
+                <!-- Lifetime plan: replaces the old four counters. Hidden for admin
+                     and for anyone who already owns it (see updateLifetimeBanner). -->
+                <div id="lifetimeBanner" class="lifetime-banner" onclick="buyLifetime()" role="button" tabindex="0">
+                    <div class="lifetime-shine"></div>
+                    <div class="lifetime-inner">
+                        <div class="lifetime-crown"><i class="fas fa-crown"></i></div>
+                        <div class="lifetime-text">
+                            <div class="lifetime-title">PURCHASE FULL APP SUBSCRIPTION FOR LIFETIME @&#8377;999</div>
+                            <div class="lifetime-sub">( ALL MATERIALS WILL BE UNLOCKED FOR LIFETIME )</div>
+                        </div>
+                        <div class="lifetime-go"><i class="fas fa-chevron-right"></i></div>
+                    </div>
                 </div>
 
                 <!-- Admin marks items "featured" (star button on each admin
@@ -7103,7 +7137,7 @@
             if (ytPlayer) { try { ytPlayer.destroy(); } catch (_) {} ytPlayer = null; }
             courseDetailState = { courseId: null, view: 'modules', moduleType: null, folderId: null, materialMode: null };
             materialViewMode = 'pdf';
-            myUnlockedSet = new Set();
+            myUnlockedSet = new UnlockSet();
             applyRoleUI(false);
 
             document.getElementById('loginOverlay').classList.add('open');
@@ -8593,7 +8627,7 @@
                         <div class="card-actions">
                             <button class="btn btn-primary btn-sm" onclick="startTest('${t.id}')"><i class="fas fa-play"></i> Start Mock</button>
                             ${!t.qnaButtonHidden ? `<button class="btn btn-secondary btn-sm" onclick="openTestQna('${t.id}')"><i class="fas fa-clipboard-question"></i> Start Q&amp;A</button>` : ''}
-                            ${(currentUser?.role === 'admin' || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : 'Unlock PDF'}</button>` : ''}
+                            ${(currentUser?.role === 'admin' || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : ('Unlock PDF ₹' + (t.pdfPrice || ''))}</button>` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -8958,7 +8992,7 @@
                         <div class="card-actions">
                             <button class="btn btn-primary btn-sm" onclick="startTest('${t.id}')"><i class="fas fa-play"></i> Start Mock</button>
                             <button class="btn btn-secondary btn-sm" onclick="openTestQna('${t.id}')" style="${t.qnaButtonHidden ? 'display:none;' : ''}"><i class="fas fa-clipboard-question"></i> Start Q&amp;A</button>
-                            ${(currentUser?.role === 'admin' || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : 'Unlock PDF'}</button>` : ''}
+                            ${(currentUser?.role === 'admin' || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : ('Unlock PDF ₹' + (t.pdfPrice || ''))}</button>` : ''}
                             <button class="btn btn-accent btn-sm" onclick="viewTestResults('${t.id}')"><i class="fas fa-chart-bar"></i></button>
                             ${currentUser?.role === 'admin' ? `
                             <button class="btn btn-secondary btn-sm" onclick="openEditTestModal('${t.id}')"><i class="fas fa-edit"></i> Edit</button>
@@ -9009,7 +9043,7 @@
                         <div class="card-actions">
                             ${!isDraft || isAdmin ? `<button class="btn btn-primary btn-sm" onclick="startTest('${t.id}')"><i class="fas fa-${unlocked ? 'play' : 'lock'}"></i> ${isAdmin && isDraft ? 'Preview' : (unlocked ? 'Start Mock' : 'Unlock')}</button>` : ''}
                             ${(!isDraft || isAdmin) && !t.qnaButtonHidden ? `<button class="btn btn-secondary btn-sm" onclick="openTestQna('${t.id}')"><i class="fas fa-${unlocked ? 'clipboard-question' : 'lock'}"></i> ${unlocked ? 'Start Q&amp;A' : 'Unlock'}</button>` : ''}
-                            ${(!isDraft || isAdmin) && (isAdmin || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : 'Unlock PDF'}</button>` : ''}
+                            ${(!isDraft || isAdmin) && (isAdmin || t.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="downloadTestPdfClick('${t.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(t) ? 'file-pdf' : 'lock'}"></i> ${isTestPdfUnlockedForMe(t) ? 'Download PDF' : ('Unlock PDF ₹' + (t.pdfPrice || ''))}</button>` : ''}
                             <button class="btn btn-accent btn-sm" onclick="viewTestResults('${t.id}')"><i class="fas fa-chart-bar"></i></button>
                             ${isAdmin ? `
                             <button class="btn ${isDraft ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPublish('${t.id}')"><i class="fas fa-${isDraft ? 'globe' : 'eye-slash'}"></i> ${isDraft ? 'Publish' : 'Unpublish'}</button>
@@ -10718,27 +10752,7 @@
         function renderDashboard() {
             const store = getStore();
 
-            try {
-                // Before the first successful sync, these are genuinely
-                // unknown, not zero — showing literal 0s here (materials,
-                // tests, students, attempts) is exactly what made a
-                // brand-new visitor's dashboard look like an empty/dead
-                // site instead of "still loading". A dash reads as
-                // "loading" instead of "there's nothing here".
-                // Materials/Tests can come from the fast Firestore-only
-                // paint above; Students/Attempts are results-derived and
-                // Firestore's rules don't let a guest read that collection
-                // at all, so those two genuinely need the full sync.
-                const materialsTestsReady = hasSyncedOnce || hasFastPaintedOnce;
-                const placeholder = materialsTestsReady ? null : '–';
-                document.getElementById('statMaterials').textContent = placeholder ?? (store.materials || []).length;
-                document.getElementById('statTests').textContent = placeholder ?? (store.tests || []).length;
-                const studentNames = new Set((store.results || []).map(r => r.studentName).filter(Boolean));
-                document.getElementById('statStudents').textContent = hasSyncedOnce ? (studentNames.size || 0) : '–';
-                document.getElementById('statAttempts').textContent = hasSyncedOnce ? (store.results || []).length : '–';
-            } catch (err) {
-                console.error('Dashboard stats failed to render:', err);
-            }
+            try { updateLifetimeBanner(); } catch (err) { console.error(err); }
 
             try {
                 renderDashboardFeaturedSliders(store);
@@ -10788,9 +10802,6 @@
                 { key: 'test', label: 'Mock Tests', icon: 'fa-tasks', color: '#f97316',
                   items: (store.tests || []).filter(t => t.featured && (isAdmin || t.published !== false)),
                   openFn: id => `startTest('${id}')` },
-                { key: 'material', label: 'Study Material', icon: 'fa-file-pdf', color: '#22c55e',
-                  items: (store.materials || []).filter(m => m.featured && (isAdmin || m.published !== false)),
-                  openFn: id => `viewMaterial('${id}')` },
                 { key: 'video', label: 'Recorded Classes', icon: 'fa-video', color: '#3b82f6',
                   items: (store.videos || []).filter(v => v.featured && (isAdmin || v.published !== false)),
                   openFn: id => `playVideo('${id}')` }
@@ -10816,7 +10827,7 @@
             // shows up immediately, since the signature covers exactly
             // the fields actually rendered below.
             const signature = JSON.stringify(sections.map(s => [
-                s.key, s.items.map(it => [it.id, it.thumbnailFileId || '', it.locked, it.price || 0, it.title])
+                s.key, s.items.map(it => [it.id, it.thumbnailFileId || '', it.locked, it.price || 0, it.title, !!it.qnaButtonHidden, !!it.pdfDownloadVisible, !!it.pdfLocked, it.pdfPrice || 0])
             ]));
             if (signature === lastFeaturedSlidersSignature && el.dataset.rendered === '1') {
                 return;
@@ -10845,7 +10856,7 @@
                     <div class="featured-slider-head"><i class="fas ${s.icon}"></i> ${escapeHtml(s.label)}</div>
                     <div class="featured-slider-viewport" id="featSlider-${s.key}">
                         ${s.items.map((it) => `
-                            <div class="featured-slide" onclick="${s.openFn(it.id)}">
+                            <div class="featured-slide" ${s.key === 'test' ? '' : `onclick="${s.openFn(it.id)}"`}>
                                 <div style="position:relative;">
                                     ${it.thumbnailFileId
                                         ? `<img src="${escapeHtml(driveThumbSrc(it.thumbnailFileId))}" class="featured-slide-thumb" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className:'featured-slide-thumb-fallback', innerHTML:'<i class=&quot;fas ${s.icon}&quot;></i>'}))" />`
@@ -10861,6 +10872,11 @@
                                     <div class="featured-slide-title">${escapeHtml(it.title)}</div>
                                     ${it.subject ? `<div class="featured-slide-sub">${escapeHtml(it.subject)}</div>` : ''}
                                 </div>
+                                ${s.key === 'test' ? `<div class="featured-slide-actions">
+                                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); startTest('${it.id}')"><i class="fas fa-play"></i> Mock</button>
+                                    ${!it.qnaButtonHidden ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openTestQna('${it.id}')"><i class="fas fa-clipboard-question"></i> Q&amp;A</button>` : ''}
+                                    ${(isAdmin || it.pdfDownloadVisible) ? `<button class="btn btn-info btn-sm" onclick="event.stopPropagation(); downloadTestPdfClick('${it.id}')"><i class="fas fa-${isTestPdfUnlockedForMe(it) ? 'file-pdf' : 'lock'}"></i> PDF</button>` : ''}
+                                </div>` : ''}
                             </div>
                         `).join('')}
                     </div>
@@ -14255,6 +14271,19 @@
         let pendingUnlockItem = null;
 
         async function requireUnlocked(itemType, itemId, price, title, onUnlocked) {
+            // Known-unlocked on this device already? Go straight in.
+            if (myUnlockedSet.has(itemType + ':' + itemId)) { onUnlocked(); return; }
+
+            // Show the price popup IMMEDIATELY from what this device already
+            // knows. It used to wait for the server's checkAccess round trip
+            // first — Apps Script reads several sheets for that, which is
+            // what made the popup take 3+ seconds. The check still runs, but
+            // in the background, and only adjusts or closes the popup if the
+            // answer differs.
+            pendingUnlockCallback = onUnlocked;
+            pendingUnlockItem = { itemType, itemId, price: price || 0, title };
+            openLockModal();
+
             let access;
             try {
                 access = await apiPost({
@@ -14262,43 +14291,56 @@
                     identifier: studentCreds.identifier || '', password: studentCreds.password || ''
                 });
             } catch (err) {
-                showToast('Cannot reach server — check your internet connection', 'error');
+                return; // popup stays; paying talks to the server anyway
+            }
+            if (!access || !access.success) return;
+            // The person may have closed it (or paid) while this was running.
+            const stillOpen = pendingUnlockCallback === onUnlocked &&
+                document.getElementById('lockOverlay').classList.contains('open');
+            if (!stillOpen) return;
+            if (access.unlocked) {
+                closeLockModal();
+                pendingUnlockCallback = null;
+                pendingUnlockItem = null;
+                onUnlocked();
                 return;
             }
-            if (!access.success) { showToast(access.error || 'Could not check access', 'error'); return; }
-            if (access.unlocked) { onUnlocked(); return; }
-
-            pendingUnlockCallback = onUnlocked;
             // access.chargeType/chargeId point at whatever should actually be
             // purchased — the course itself if this item is tagged into one,
             // otherwise the item as passed in. This is what stops a course's
             // items from ever being buyable separately.
-            pendingUnlockItem = {
+            const next = {
                 itemType: access.chargeType || itemType,
                 itemId: access.chargeId || itemId,
-                price: access.price != null ? access.price : price,
+                price: access.price != null ? access.price : (price || 0),
                 title: access.title || title
             };
-            openLockModal();
+            const changed = next.itemType !== pendingUnlockItem.itemType || next.itemId !== pendingUnlockItem.itemId ||
+                next.price !== pendingUnlockItem.price || next.title !== pendingUnlockItem.title;
+            pendingUnlockItem = next;
+            if (changed) openLockModal();
         }
 
         function openLockModal() {
             const item = pendingUnlockItem;
             const box = document.getElementById('lockModalBox');
             const isGuest = !currentUser;
+            const isLifetime = item.itemType === 'lifetime';
             box.innerHTML = `
                 <div class="modal-header">
-                    <h3><i class="fas fa-lock"></i> Locked</h3>
+                    <h3>${isLifetime ? '<i class="fas fa-crown"></i> Lifetime Access' : '<i class="fas fa-lock"></i> Locked'}</h3>
                     <button class="modal-close" onclick="closeLockModal()">&times;</button>
                 </div>
-                <p style="text-align:center;color:var(--text-secondary);font-size:13px;">${escapeHtml(item.title || 'This content')} is a paid item.</p>
+                <p style="text-align:center;color:var(--text-secondary);font-size:13px;">${isLifetime
+                    ? 'One payment unlocks every mock, Q&amp;A, PDF and class on your account — for life.'
+                    : escapeHtml(item.title || 'This content') + ' is a paid item.'}</p>
                 <div class="lock-modal-price">₹${item.price}</div>
                 ${isGuest ? `
                     <p style="text-align:center;font-size:12px;color:var(--text-secondary);margin-bottom:12px;">Sign up or sign in to purchase and unlock this.</p>
                     <button class="btn btn-primary btn-block" onclick="closeLockModal(); openLoginFromGuest('signup');"><i class="fas fa-user-plus"></i> Sign Up</button>
                     <button class="btn btn-outline btn-block" style="margin-top:8px;" onclick="closeLockModal(); openLoginFromGuest('student');"><i class="fas fa-sign-in-alt"></i> Sign In</button>
                 ` : `
-                    <button class="btn btn-primary btn-block" onclick="startCheckout()"><i class="fas fa-credit-card"></i> Pay ₹${item.price} & Unlock</button>
+                    <button class="btn btn-primary btn-block" id="payNowBtn" onclick="startCheckout()"><i class="fas fa-credit-card"></i> Pay ₹${item.price} & Unlock</button>
                 `}
             `;
             document.getElementById('lockOverlay').classList.add('open');
@@ -14311,7 +14353,10 @@
         async function startCheckout() {
             const item = pendingUnlockItem;
             if (!item) return;
-            showToast('Starting payment...', 'info');
+            const payBtn = document.getElementById('payNowBtn');
+            const payBtnHtml = payBtn ? payBtn.innerHTML : '';
+            const restorePayBtn = () => { if (payBtn) { payBtn.disabled = false; payBtn.innerHTML = payBtnHtml; } };
+            if (payBtn) { payBtn.disabled = true; payBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting payment...'; }
             let order;
             try {
                 order = await apiPost({
@@ -14319,9 +14364,11 @@
                     identifier: studentCreds.identifier, password: studentCreds.password
                 });
             } catch (err) {
+                restorePayBtn();
                 showToast('Cannot reach server — check your internet connection', 'error');
                 return;
             }
+            restorePayBtn();
             if (!order.success) { showToast(order.error || 'Could not start payment', 'error'); return; }
 
             const rzp = new Razorpay({
@@ -14354,7 +14401,7 @@
                         return;
                     }
                     closeLockModal();
-                    showToast('🎉 Unlocked! Tap it again to open it.', 'success');
+                    showToast(item.itemType === 'lifetime' ? '🎉 Lifetime access unlocked — everything is yours!' : '🎉 Unlocked! Tap it again to open it.', 'success');
                     // Deliberately do NOT auto-launch the content here.
                     // Jumping straight into the test/material/video right
                     // after paying was confusing — the student's screen
@@ -14713,17 +14760,46 @@
         // locked flag, never the student's own purchase, even though
         // tapping it DID let them straight in (checkAccess was already
         // correct — only the label was stale).
-        let myUnlockedSet = new Set();
+        // Owning the lifetime plan unlocks EVERYTHING: has() answers true
+        // for any item, so every existing unlock check on this page (mock,
+        // Q&A, PDF, course, video) honours it without being touched.
+        class UnlockSet extends Set {
+            has(k) { return super.has(k) || (k !== 'lifetime:all' && super.has('lifetime:all')); }
+            hasLifetime() { return super.has('lifetime:all'); }
+        }
+        const LIFETIME_PRICE = 999;
+        let myUnlockedSet = new UnlockSet();
+
+        function updateLifetimeBanner() {
+            const el = document.getElementById('lifetimeBanner');
+            if (!el) return;
+            const hide = currentUser?.role === 'admin' || myUnlockedSet.hasLifetime() ||
+                (currentUser?.role === 'student' && currentUser.freeAccess);
+            el.style.display = hide ? 'none' : '';
+        }
+
+        function buyLifetime() {
+            if (!currentUser) {
+                showToast('Please sign up or sign in to get lifetime access', 'info');
+                openLoginFromGuest('signup');
+                return;
+            }
+            if (currentUser.role === 'admin') return;
+            pendingUnlockCallback = null;
+            pendingUnlockItem = { itemType: 'lifetime', itemId: 'all', price: LIFETIME_PRICE, title: 'Lifetime Full Access' };
+            openLockModal();
+        }
 
         async function refreshMyUnlocked() {
             if (!currentUser || currentUser.role === 'admin' || !studentCreds.identifier) {
-                myUnlockedSet = new Set();
+                myUnlockedSet = new UnlockSet();
                 return;
             }
             try {
                 const res = await apiPost({ action: 'myPurchases', identifier: studentCreds.identifier, password: studentCreds.password });
                 if (res.success) {
-                    myUnlockedSet = new Set(res.purchases.map(p => p.itemType + ':' + p.itemId));
+                    myUnlockedSet = new UnlockSet(res.purchases.map(p => p.itemType + ':' + p.itemId));
+                    try { updateLifetimeBanner(); } catch (_) {}
                 }
             } catch (_) {
                 // Non-fatal — worst case the button still says "Unlock" and
@@ -15467,12 +15543,17 @@
             // download. If it isn't cached yet it gets built once, saved
             // to Drive, and every later student gets the saved copy.
             if (isTest && currentUser?.role !== 'admin') {
-                if (!isBilingual) { submitStudentPdf('en'); return; }
+                // Nothing to choose when it's English-only with no hints.
+                if (!isBilingual && !hasAnyHint) { submitStudentPdf('en'); return; }
                 openModal(`
                     <div class="modal-header"><h3><i class="fas fa-file-pdf"></i> Download PDF</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
                     <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px;">
+                        ${hasAnyHint ? `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--glass-border);border-radius:12px;cursor:pointer;font-size:14px;font-weight:600;">
+                            <input type="checkbox" id="stuPdfDetail" style="width:20px;height:20px;accent-color:#f59e0b;">
+                            <span>Detailed info <span style="font-weight:400;color:var(--text-secondary);font-size:12px;">(adds the explanation / hint under each question)</span></span>
+                        </label>` : ''}
                         <button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('en')"><i class="fas fa-font"></i> English</button>
-                        <button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('as')"><i class="fas fa-font"></i> Assamese</button>
+                        ${isBilingual ? `<button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('as')"><i class="fas fa-font"></i> Assamese</button>` : ''}
                     </div>
                 `);
                 return;
@@ -15539,8 +15620,12 @@
         }
 
         function submitStudentPdf(lang) {
+            const cb = document.getElementById('stuPdfDetail');
+            const hints = !!(cb && cb.checked);
             closeModal();
-            printQnaPdf(pdfPromptSource, { lang, mode: 'options', hints: false });
+            // view:true → opens in the same in-app viewer the study material
+            // uses (zoom / download / close), straight from Drive.
+            printQnaPdf(pdfPromptSource, { lang, mode: 'options', hints, view: true });
         }
 
         function submitQnaPdfOptions() {
@@ -15667,10 +15752,14 @@
             // "English" and "Assamese" versions save under the identical
             // name and silently overwrite each other.
             const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
-            const safeName = (title + ' (' + langLabel + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
+            const safeName = (title + ' (' + langLabel + (opts.hints ? ', Detailed' : '') + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
             const cacheKey = isTest ? qnaPdfCacheKey(source.data.id, opts) : null;
             const cachedFileId = cacheKey && source.data.qnaPdfDrive && source.data.qnaPdfDrive[cacheKey];
 
+            if (cachedFileId && opts.view) {
+                openPdfViewer(cachedFileId, safeName, true);
+                return;
+            }
             if (cachedFileId) {
                 showPdfProgress('Downloading...');
                 try {
@@ -15681,11 +15770,11 @@
                     console.error(err);
                     hidePdfProgress();
                     showToast('Could not download the saved copy — regenerating...', 'error');
-                    await generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey);
+                    await generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, true, true, null, !!opts.view);
                 }
                 return;
             }
-            await generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey);
+            await generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, true, true, null, !!opts.view);
         }
 
         // Copies just the PDF page styles out of this page's own stylesheet
@@ -15849,7 +15938,7 @@
             }
         }
 
-        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true, persistCache = true, folderPath = null) {
+        async function generateAndDeliverQnaPdf(source, opts, title, safeName, cacheKey, deliverLocally = true, persistCache = true, folderPath = null, openViewer = false) {
             const isTest = source.type === 'test';
             const questions = isTest ? (source.data.questions || []) : (source.data.qna || []);
             showPdfProgress('Preparing PDF...');
@@ -16116,7 +16205,12 @@
 
             if (deliverLocally) {
                 hidePdfProgress();
-                if (!isIOS()) {
+                if (openViewer && savedFileId) {
+                    // First person to ask for this version: it's now saved on
+                    // Drive, so show it in the viewer like any other saved
+                    // file — and everyone after them gets it instantly.
+                    openPdfViewer(savedFileId, safeName, true);
+                } else if (!isIOS()) {
                     // Android/desktop can save the blob already in hand,
                     // whether or not the Drive copy worked.
                     downloadBlobToDevice(blob, safeName);
