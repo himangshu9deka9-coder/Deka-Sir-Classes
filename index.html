@@ -4480,7 +4480,6 @@
             <a class="active" data-page="dashboard"><i class="fas fa-chart-pie"></i> Dashboard</a>
             <a data-page="tests"><i class="fas fa-pencil-alt"></i> Mock Tests</a>
             <a data-page="recorded"><i class="fas fa-video"></i> Recorded Classes</a>
-            <a data-page="courses"><i class="fas fa-graduation-cap"></i> Courses</a>
             <div class="nav-label" id="toolsLabel">Tools</div>
             <a data-page="builder" id="builderLink"><i class="fas fa-code"></i> Test Builder <span class="badge">JSON</span></a>
             <a data-page="results" id="resultsNavLink" style="display:none;"><i class="fas fa-clipboard-list"></i> Results</a>
@@ -4497,7 +4496,6 @@
     <nav class="bottom-nav" id="bottomNav">
         <a class="active" data-page="dashboard"><i class="fas fa-chart-pie"></i> Dashboard</a>
         <a data-page="tests"><i class="fas fa-pencil-alt"></i> Mock</a>
-        <a data-page="courses"><i class="fas fa-graduation-cap"></i> Course</a>
         <a data-page="recorded"><i class="fas fa-video"></i> Recorded</a>
     </nav>
 
@@ -5262,6 +5260,56 @@
             return memoryStore;
         }
 
+        // ----------------------------------------------------------------
+        // WHY EDITS (e.g. a PDF price) USED TO "REVERT TO THE OLD VALUE":
+        // the app displays content from FIRESTORE, not from the Sheet. A
+        // save goes to the Sheet first and is mirrored into Firestore a
+        // moment later. If that mirror didn't land (admin's Firebase
+        // session had lapsed, daily write quota hit, a network blip) the
+        // Sheet had your new price but Firestore still had the old one —
+        // and the very next background refresh (every few seconds) pulled
+        // the OLD value back over your edit. Nothing told you it failed.
+        //
+        // Now: every changed test is remembered here until Firestore has
+        // really accepted it; the refresh keeps YOUR version while it's
+        // pending; failures are shown, not hidden; and it retries by itself.
+        // ----------------------------------------------------------------
+        const firestorePendingTests = new Map();
+        let firestoreRetryTimer = null;
+        let lastFirestoreWarnAt = 0;
+        function warnFirestoreStale(msg) {
+            if (Date.now() - lastFirestoreWarnAt < 15000) return;
+            lastFirestoreWarnAt = Date.now();
+            showToast(msg, 'error');
+        }
+        function scheduleFirestoreRetry() {
+            if (firestoreRetryTimer) return;
+            firestoreRetryTimer = setTimeout(() => { firestoreRetryTimer = null; retryFirestorePending(); }, 20000);
+        }
+        async function ensureAdminFirebaseSession() {
+            if (window.auth?.currentUser) return true;
+            if (currentUser?.role === 'admin' && adminCreds?.email && adminCreds?.password && window.bridgeAdminToFirebaseAuth) {
+                try { await window.bridgeAdminToFirebaseAuth(adminCreds.email, adminCreds.password); } catch (_) {}
+            }
+            return !!window.auth?.currentUser;
+        }
+        async function retryFirestorePending() {
+            if (!firestorePendingTests.size || !window.syncContentToFirestore) return;
+            if (!(await ensureAdminFirebaseSession())) { scheduleFirestoreRetry(); return; }
+            const sent = new Map(firestorePendingTests);
+            try {
+                await window.syncContentToFirestore({
+                    mergedTests: [...sent.values()], mergedMaterials: [], mergedFolders: [], mergedVideos: [], mergedCourses: [],
+                    baselineTests: [], baselineMaterials: [], baselineFolders: [], baselineVideos: [], baselineCourses: []
+                });
+                sent.forEach((m, id) => { if (firestorePendingTests.get(id) === m) firestorePendingTests.delete(id); });
+                showToast('✅ Your latest changes have now reached the student side too', 'success');
+            } catch (err) {
+                console.warn('[Firestore] retry failed:', err);
+                scheduleFirestoreRetry();
+            }
+        }
+
         function saveStore(store) {
             // See the big comment on lastSyncedSnapshot above for why this
             // — not memoryStore — is the correct "before" state, and why
@@ -5323,6 +5371,22 @@
             // Sheets it never needs a full server baseline to stay safe —
             // anything this diff doesn't mention is simply never touched.
             if (window.syncContentToFirestore) {
+                // Remember every test whose settings changed in this save, until
+                // Firestore confirms it (see the big note above).
+                const sentMeta = new Map();
+                if (currentUser?.role === 'admin') {
+                    const oldById = new Map((oldStore.tests || []).map(t => [t.id, t]));
+                    (store.tests || []).forEach(t => {
+                        if (!t || !t.id) return;
+                        const { questions: _q, ...meta } = t;
+                        const prev = oldById.get(t.id);
+                        const prevMeta = prev ? (({ questions: _p, ...m }) => m)(prev) : null;
+                        if (!prevMeta || JSON.stringify(prevMeta) !== JSON.stringify(meta)) {
+                            firestorePendingTests.set(t.id, meta);
+                            sentMeta.set(t.id, meta);
+                        }
+                    });
+                }
                 (async () => {
                     // Self-healing: if the Firebase Auth session isn't
                     // live right now (never finished bridging, or got
@@ -5338,13 +5402,28 @@
                             await window.bridgeStudentToFirebaseAuth(studentCreds.identifier, studentCreds.password);
                         }
                     }
-                    if (!window.auth?.currentUser) return; // still no session — this save reached Sheets; Firestore stays stale until a session exists
+                    if (!window.auth?.currentUser) {
+                        // Used to return silently here — the exact moment an edit
+                        // looked saved but then reverted. Say so, and keep retrying.
+                        if (sentMeta.size) {
+                            warnFirestoreStale('⚠️ Saved, but your admin session with the student database has expired — students will still see the OLD value until you log out and log in again as admin. Retrying automatically…');
+                            scheduleFirestoreRetry();
+                        }
+                        return;
+                    }
                     try {
                         await window.syncContentToFirestore({
                             mergedTests: store.tests, mergedMaterials: store.materials, mergedFolders: store.folders, mergedVideos: store.videos, mergedCourses: store.courses,
                             baselineTests: oldStore.tests, baselineMaterials: oldStore.materials, baselineFolders: oldStore.folders, baselineVideos: oldStore.videos, baselineCourses: oldStore.courses
                         });
+                        sentMeta.forEach((m, id) => { if (firestorePendingTests.get(id) === m) firestorePendingTests.delete(id); });
                     } catch (err) {
+                        if (sentMeta.size) {
+                            if (err?.code !== 'resource-exhausted') {
+                                warnFirestoreStale('⚠️ Saved, but the student side did not update yet (' + (err?.code || err?.message || 'network') + '). Retrying automatically…');
+                            }
+                            scheduleFirestoreRetry();
+                        }
                         console.warn('[Firestore] immediate mirror failed (Sheets copy is still saved; this test/material will catch up on its next edit):', err);
                         if (err?.code === 'resource-exhausted') {
                             showToast('⚠️ Firestore\'s free daily write limit is used up — this save reached Sheets fine, but Firestore won\'t catch up until the quota resets (or the project is upgraded to Blaze).', 'error');
@@ -5522,6 +5601,14 @@
                         t.questions = prevQuestionsById[t.id];
                     }
                 });
+                // Edits Firestore hasn't confirmed yet win over its stale copy —
+                // otherwise this refresh would put the OLD value back on screen.
+                if (firestorePendingTests.size) {
+                    newTests.forEach((t, i) => {
+                        const m = firestorePendingTests.get(t.id);
+                        if (m) newTests[i] = { ...t, ...m, questions: t.questions };
+                    });
+                }
                 const newMaterials = normalized.materials;
                 const newVideos = normalized.videos;
                 const newCourses = contentSource.courses || [];
@@ -10796,9 +10883,6 @@
                 // and they're the main product, so every published course
                 // just shows here directly, same as the old dashboard
                 // course row did, just restyled to match the others.
-                { key: 'course', label: 'Courses', icon: 'fa-graduation-cap', color: '#a855f7',
-                  items: (store.courses || []).filter(c => isAdmin || c.published !== false),
-                  openFn: id => `openCourseDetail('${id}')` },
                 { key: 'test', label: 'Mock Tests', icon: 'fa-tasks', color: '#f97316',
                   items: (store.tests || []).filter(t => t.featured && (isAdmin || t.published !== false)),
                   openFn: id => `startTest('${id}')` },
@@ -10866,7 +10950,9 @@
                                         ? (currentUser?.role === 'student' && currentUser.freeAccess
                                             ? `<div class="featured-slide-free" style="background:#16a34a;"><i class="fas fa-gift"></i> Free for you</div>`
                                             : `<div class="featured-slide-lock"><i class="fas fa-lock"></i> ₹${it.price || 0}</div>`)
-                                        : `<div class="featured-slide-free"><i class="fas fa-gift"></i> FREE</div>`}
+                                        : (s.key === 'test' && it.pdfLocked && it.pdfPrice > 0
+                                            ? `<div class="featured-slide-lock"><i class="fas fa-file-pdf"></i> PDF ₹${it.pdfPrice}</div>`
+                                            : `<div class="featured-slide-free"><i class="fas fa-gift"></i> FREE</div>`)}
                                 </div>
                                 <div class="featured-slide-body">
                                     <div class="featured-slide-title">${escapeHtml(it.title)}</div>
