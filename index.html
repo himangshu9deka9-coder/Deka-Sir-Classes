@@ -4318,6 +4318,8 @@
         #qnaPdfPrintArea .pdf-ak-item { font-size: 13px; color: #1c1a15; display: flex; gap: 4px; align-items: baseline; }
         #qnaPdfPrintArea .pdf-ak-num { font-weight: 700; color: #101d33; flex: 0 0 auto; font-family: 'JetBrains Mono', monospace; }
         #qnaPdfPrintArea .pdf-ak-item.as { font-family: 'Noto Sans Bengali', sans-serif; }
+        #qnaPdfPrintArea .pdf-hint-item { display: flex; gap: 8px; align-items: baseline; font-size: 14.5px; line-height: 1.55; color: #1c1a15; margin-bottom: 12px; }
+        #qnaPdfPrintArea .pdf-hint-item.as { font-family: 'Noto Sans Bengali', sans-serif; }
     </style>
     <div id="qnaPdfPrintArea"></div>
 </head>
@@ -5310,7 +5312,9 @@
             }
         }
 
+        let storeEditVersion = 0; // bumped on every admin save; lets a slow push know newer edits exist
         function saveStore(store) {
+            storeEditVersion++;
             // See the big comment on lastSyncedSnapshot above for why this
             // — not memoryStore — is the correct "before" state, and why
             // both sides need to be independent deep clones rather than
@@ -5714,23 +5718,71 @@
         //    in newLocal, only on the server) -> keep the server's version,
         //    so a stale/lagging local cache can never silently wipe
         //    something another tab/device added.
+        // Field-level three-way merge. THE BUG THIS REPLACES: for any item the
+        // device already knew, the old code took this device's WHOLE copy and
+        // pushed it — so any save from a device holding even slightly stale
+        // data (another tab/phone, or this one after a slow earlier push)
+        // silently rolled back EVERY item to its stale values. That is how all
+        // PDF prices could "suddenly reset". Now only the fields THIS save
+        // actually changed (new vs old) are applied on top of the server's
+        // current copy; everything else keeps whatever the server has now.
+        function mergeItem(o, n, f) {
+            const out = { ...f };
+            const keys = new Set([...Object.keys(n), ...Object.keys(o)]);
+            keys.forEach(k => {
+                if (JSON.stringify(o[k]) !== JSON.stringify(n[k])) {
+                    if (k in n) out[k] = n[k]; else delete out[k];
+                }
+            });
+            return out;
+        }
         function mergeCollection(oldLocal, newLocal, freshServer) {
             oldLocal = oldLocal || []; newLocal = newLocal || []; freshServer = freshServer || [];
-            const oldIds = new Set(oldLocal.map(x => x.id));
+            const oldById = new Map(oldLocal.map(x => [x.id, x]));
             const newById = new Map(newLocal.map(x => [x.id, x]));
             const freshIds = new Set(freshServer.map(x => x.id));
             const result = [];
             freshServer.forEach(item => {
-                if (newById.has(item.id)) {
-                    result.push(newById.get(item.id));
-                } else if (oldIds.has(item.id)) {
+                const n = newById.get(item.id), o = oldById.get(item.id);
+                if (n && o) {
+                    result.push(mergeItem(o, n, item));        // known item: apply only this save's changes
+                } else if (n) {
+                    result.push(n);                            // created here
+                } else if (o) {
                     // known before, gone now -> deliberate delete, skip it
                 } else {
-                    result.push(item); // unknown to this session -> protect it
+                    result.push(item);                         // unknown to this session -> keep the server's
                 }
             });
             newLocal.forEach(item => { if (!freshIds.has(item.id)) result.push(item); }); // brand new locally
             return result;
+        }
+
+        // ---- Fast path: a save that only changed test SETTINGS (price, lock,
+        // visibility, language, PDF options...) no longer re-reads and rewrites
+        // the entire Sheet — that is what made every save take minutes. It
+        // sends just the changed fields of just the changed tests. ----
+        const META_PATCHABLE = ['title','subject','duration','folderId','published','hintsEnabled','locked','price','courseIds','courseFreeIds','showInLibrary','hideFromLibrary','qnaButtonHidden','pdfDownloadVisible','pdfLocked','pdfPrice','guestAllowed','qnaPdfDrive','langMode','pdfOptions','featured','courseFolderMap','thumbnailFileId'];
+        function computeMetaPatches(oldStore, newStore) {
+            const J = x => JSON.stringify(x === undefined ? null : x);
+            for (const k of ['materials', 'folders', 'videos', 'courses']) {
+                if (J(oldStore[k] || []) !== J(newStore[k] || [])) return null;
+            }
+            const oldT = oldStore.tests || [], newT = newStore.tests || [];
+            if (oldT.length !== newT.length) return null;
+            const oldById = new Map(oldT.map(t => [t.id, t]));
+            const patches = [];
+            for (const t of newT) {
+                const o = oldById.get(t.id);
+                if (!o) return null;
+                const oq = o.questions || [], nq = t.questions || [];
+                if (oq.length !== nq.length) return null;
+                if (nq.length && J(oq) !== J(nq)) return null;
+                const fields = {};
+                META_PATCHABLE.forEach(k => { if (J(o[k]) !== J(t[k])) fields[k] = (t[k] === undefined ? null : t[k]); });
+                if (Object.keys(fields).length) patches.push({ id: t.id, fields });
+            }
+            return { patches };
         }
 
         // Pushes this session's tests/materials/folders changes up to the
@@ -5760,6 +5812,7 @@
         let lastPushFinishedAt = 0;
 
         function pushStoreToServer(oldStore, newStore) {
+            const queuedAtVersion = storeEditVersion;
             // Count this push as "pending" from the moment it's queued —
             // not just once it actually starts — so syncFromServer()'s
             // guard below covers the MIN_MS_BETWEEN_PUSHES queueing delay
@@ -5773,7 +5826,7 @@
                 try {
                     const waitFor = MIN_MS_BETWEEN_PUSHES - (Date.now() - lastPushFinishedAt);
                     if (waitFor > 0) await new Promise(r => setTimeout(r, waitFor));
-                    await pushStoreToServerInner(oldStore, newStore);
+                    await pushStoreToServerInner(oldStore, newStore, queuedAtVersion);
                     lastPushFinishedAt = Date.now();
                 } finally {
                     // Matches the ++ above — pushStoreToServerInner does
@@ -5873,7 +5926,7 @@
             }
         });
 
-        async function pushStoreToServerInner(oldStore, newStore) {
+        async function pushStoreToServerInner(oldStore, newStore, queuedAtVersion) {
             if (!currentUser || currentUser.role !== 'admin') return;
             pushInFlight++;
             // Only bother the admin with a "Saving..." toast if it's taking
@@ -5882,6 +5935,25 @@
             // never shows.
             const savingToastTimer = setTimeout(() => showToast('💾 Saving...', 'info'), 1200);
             try {
+                const quick = computeMetaPatches(oldStore, newStore);
+                if (quick) {
+                    if (!quick.patches.length) { clearTimeout(savingToastTimer); return; }
+                    try {
+                        const r = await apiPost({ action: 'patchTests', email: adminCreds.email, password: adminCreds.password, patches: quick.patches }, 40000);
+                        if (r && r.success && !(r.missing && r.missing.length)) {
+                            clearTimeout(savingToastTimer);
+                            showToast('✅ Saved', 'success');
+                            lastFailedPush = null; retryAttemptCount = 0; quotaRetryCount = 0;
+                            if (pendingRetryTimer) { clearTimeout(pendingRetryTimer); pendingRetryTimer = null; }
+                            const base = deepClone(oldStore);
+                            quick.patches.forEach(pt => { const bt = base.tests.find(x => x.id === pt.id); if (bt) Object.assign(bt, pt.fields); });
+                            lastSyncedSnapshot = base;
+                            return;
+                        }
+                    } catch (err) {
+                        console.warn('Quick save failed — falling back to the full sync:', err);
+                    }
+                }
                 // IMPORTANT: must be the FULL payload (full=1), not the
                 // light one syncFromServer uses. This read is the base for
                 // mergeCollection() below — any test NOT opened this admin
@@ -5940,27 +6012,25 @@
                 // Reflect the merge locally too, and re-render, in case
                 // something was protected/added back that this session
                 // didn't know about.
-                const store = getStore();
-                store.tests = mergedTests;
-                store.materials = mergedMaterials;
-                store.folders = mergedFolders;
-                store.videos = mergedVideos;
-                store.courses = mergedCourses;
-                // Keep the in-memory copy authoritative regardless of
-                // whether the localStorage write below succeeds — this is
-                // what every render in this session actually reads.
-                memoryStore = store;
-                // Same local-storage-cap issue as saveStore() above — this
-                // write is a local convenience cache, not the actual save.
-                // If it throws (cache full), don't let that stop the real
-                // syncStore request below from going out to the server, and
-                // don't clear the key either — memoryStore already holds
-                // the correct data for this session, so there's no
-                // corrupt/half-written blob risk to guard against here.
-                try {
-                    localStorage.setItem(STORE_KEY, JSON.stringify(store));
-                } catch (err) {
-                    console.warn('Local cache write failed (likely full) — continuing with server save:', err);
+                // Only reflect the merge into the live store when nothing newer
+                // was edited while this (slow) push was running. THE OTHER HALF
+                // OF THE BUG: this used to always replace the live store with a
+                // snapshot taken when the push was QUEUED — so a second edit
+                // made while the first was still saving vanished from the
+                // screen (and a later retry then re-pushed the reverted copy).
+                if (queuedAtVersion === undefined || queuedAtVersion === storeEditVersion) {
+                    const store = getStore();
+                    store.tests = mergedTests;
+                    store.materials = mergedMaterials;
+                    store.folders = mergedFolders;
+                    store.videos = mergedVideos;
+                    store.courses = mergedCourses;
+                    memoryStore = store;
+                    try {
+                        localStorage.setItem(STORE_KEY, JSON.stringify(store));
+                    } catch (err) {
+                        console.warn('Local cache write failed (likely full) — continuing with server save:', err);
+                    }
                 }
 
                 const result = await apiPost({
@@ -9087,8 +9157,9 @@
                             <button class="btn btn-danger btn-sm" onclick="deleteTest('${t.id}')"><i class="fas fa-trash"></i></button>
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
                             <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
-                            <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPdfVisible('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
+                            <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="openPdfBtnSettings('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
                             <button class="btn ${t.pdfLocked ? 'btn-danger' : 'btn-outline'} btn-sm" onclick="toggleTestPdfLock('${t.id}')" title="${t.pdfLocked ? 'PDF download locked — ₹' + (t.pdfPrice || 0) + ' (tap to unlock)' : 'PDF download is free (tap to lock + set a price)'}"><i class="fas fa-${t.pdfLocked ? 'lock' : 'lock-open'}"></i> PDF Lock</button>
+                            <button class="btn ${testLangMode(t) === 'both' ? 'btn-outline' : 'btn-accent'} btn-sm" onclick="openTestLangSettings('${t.id}')" title="Choose which language students see in this mock"><i class="fas fa-language"></i> ${testLangMode(t) === 'both' ? 'Bilingual' : (testLangMode(t) === 'en' ? 'English only' : 'Assamese only')}</button>
                             ` : ''}
                         </div>
                     </div>
@@ -9114,7 +9185,7 @@
 
             container.innerHTML = tests.map(t => {
                 const hasAttempt = store.results.some(r => r.testId === t.id && r.studentName === currentUser?.name);
-                const isBilingual = t.questions && t.questions.some(q => q.question_as && q.question_as !== q
+                const isBilingual = testLangMode(t) === 'both' && t.questions && t.questions.some(q => q.question_as && q.question_as !== q
                     .question_en);
                 const isDraft = t.published === false;
                 const unlocked = isUnlockedForMe('test', t);
@@ -9146,8 +9217,9 @@
                             <button class="btn ${t.guestAllowed ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestGuestAccess('${t.id}')" title="${t.guestAllowed ? 'This mock is open to visitors with no account \u2014 tap to require sign-in again' : 'Let visitors with no account try this mock (Start Mock / Q&A / PDF), free'}"><i class="fas fa-${t.guestAllowed ? 'unlock' : 'user-slash'}"></i> Guest Access</button>
                             <button class="btn ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'btn-success' : 'btn-outline'} btn-sm" onclick="confirmRegenerateTestQnaPdfs('${t.id}')" title="${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'This mock has cached PDFs that auto-refresh on every edit \u2014 tap to force-regenerate now' : 'Generates and caches every PDF version of this mock so students get an instant download \u2014 keeps itself up to date automatically after this'}"><i class="fas fa-cloud-upload-alt"></i> ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'PDF Cached' : 'Upload PDF'}</button>
                             <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
-                            <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestPdfVisible('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
+                            <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="openPdfBtnSettings('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
                             <button class="btn ${t.pdfLocked ? 'btn-danger' : 'btn-outline'} btn-sm" onclick="toggleTestPdfLock('${t.id}')" title="${t.pdfLocked ? 'PDF download locked — ₹' + (t.pdfPrice || 0) + ' (tap to unlock)' : 'PDF download is free (tap to lock + set a price)'}"><i class="fas fa-${t.pdfLocked ? 'lock' : 'lock-open'}"></i> PDF Lock</button>
+                            <button class="btn ${testLangMode(t) === 'both' ? 'btn-outline' : 'btn-accent'} btn-sm" onclick="openTestLangSettings('${t.id}')" title="Choose which language students see in this mock"><i class="fas fa-language"></i> ${testLangMode(t) === 'both' ? 'Bilingual' : (testLangMode(t) === 'en' ? 'English only' : 'Assamese only')}</button>
                             ` : ''}
                         </div>
                     </div>
@@ -12592,6 +12664,18 @@
         // reference living in store.tests (see the getStore() convention
         // used throughout this file), every other view sharing that
         // reference sees the questions the moment they arrive too.
+        // Lazily loading a test's questions is NOT an edit. Without this the
+        // "before" snapshot still shows that test as empty, so the next save
+        // would think its questions had changed.
+        function syncBaselineQuestions(test) {
+            try {
+                const snap = lastSyncedSnapshot && (lastSyncedSnapshot.tests || []).find(t => t.id === test.id);
+                if (snap && (!snap.questions || !snap.questions.length) && test.questions && test.questions.length) {
+                    snap.questions = deepClone(test.questions);
+                }
+            } catch (_) {}
+        }
+
         async function ensureTestQuestionsLoaded(test) {
             if (test.questions && test.questions.length) return true;
             // questionCount is persisted on the Tests sheet itself (see
@@ -12611,6 +12695,7 @@
                 const fsQuestions = await window.fetchFirestoreQuestions(test.id);
                 if (fsQuestions && fsQuestions.length) {
                     test.questions = fsQuestions;
+                    syncBaselineQuestions(test);
                     return true;
                 }
             }
@@ -12625,6 +12710,7 @@
                 const result = await apiGet('action=getTestQuestions&testId=' + encodeURIComponent(test.id), 45000);
                 if (result && result.success && Array.isArray(result.questions)) {
                     test.questions = result.questions;
+                    syncBaselineQuestions(test);
                     return true;
                 } else {
                     showToast('Could not load this test\'s questions — check your connection and try again', 'error');
@@ -12758,7 +12844,8 @@
                     `<button class="palette-btn" data-idx="${idx}" onclick="goToQuestion(${idx})">${idx+1}</button>`
                 ).join('');
 
-                const isBilingual = test.questions && test.questions.some(q => q.question_as && q.question_as !== q
+                const _lm = testLangMode(test); if (_lm !== 'both') currentLang = _lm;
+                const isBilingual = _lm === 'both' && test.questions && test.questions.some(q => q.question_as && q.question_as !== q
                     .question_en);
 
                 let langToggleHtml = '';
@@ -13400,7 +13487,10 @@
             reviewCurrentQuestions = questions;
             reviewLang = currentLang || 'en';
 
-            const isBilingual = questions.some(q => q.question_as && q.question_as !== q.question_en);
+            const _rt = (getStore().tests || []).find(x => x.id === result.testId);
+            const _lm = testLangMode(_rt);
+            if (_lm !== 'both') reviewLang = _lm;
+            const isBilingual = _lm === 'both' && questions.some(q => q.question_as && q.question_as !== q.question_en);
             document.getElementById('reviewLangToggle').style.display = isBilingual ? 'flex' : 'none';
             document.querySelectorAll('#reviewLangToggle button').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.lang === reviewLang);
@@ -13518,7 +13608,8 @@
 
                 // Same EN/অ toggle as Mock — only shown when the test
                 // actually has Assamese content to switch to.
-                const isBilingual = (test?.questions || []).some(q => q.question_as && q.question_as !== q.question_en);
+                const _lm = testLangMode(test); if (_lm !== 'both') currentLang = _lm;
+                const isBilingual = _lm === 'both' && (test?.questions || []).some(q => q.question_as && q.question_as !== q.question_en);
                 document.getElementById('resultsLangToggle').innerHTML = isBilingual ? `
                     <div class="test-lang-toggle">
                         <button class="${currentLang === 'en' ? 'active' : ''}" data-lang="en" onclick="setResultsLanguage('en')" title="English">A</button>
@@ -14202,6 +14293,71 @@
         // default (student.pdfDownloadVisible starts undefined/false) so
         // admin decides per test whether to offer it at all before
         // anyone ever sees the button.
+        // ---- Admin: language shown to students for this mock ----
+        function openTestLangSettings(testId) {
+            const t = getStore().tests.find(x => x.id === testId);
+            if (!t) return;
+            const cur = testLangMode(t);
+            const opt = (v, label, sub) => `<label style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--glass-border);border-radius:12px;cursor:pointer;">
+                <input type="radio" name="tlmRadio" value="${v}" ${cur === v ? 'checked' : ''} style="width:20px;height:20px;accent-color:#f59e0b;">
+                <span><strong>${label}</strong><br><span style="font-size:12px;color:var(--text-secondary);">${sub}</span></span></label>`;
+            openModal(`
+                <div class="modal-header"><h3><i class="fas fa-language"></i> Language for students</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    ${opt('both', 'Bilingual', 'Students can switch between English and Assamese')}
+                    ${opt('en', 'English only', 'Students only ever see English')}
+                    ${opt('as', 'Assamese only', 'Students only ever see Assamese')}
+                    <button class="btn btn-primary btn-block" onclick="saveTestLangSettings('${testId}')"><i class="fas fa-save"></i> Save</button>
+                </div>`);
+        }
+        function saveTestLangSettings(testId) {
+            const store = getStore();
+            const t = store.tests.find(x => x.id === testId);
+            if (!t) return;
+            const v = (document.querySelector('input[name="tlmRadio"]:checked') || {}).value || 'both';
+            t.langMode = v;
+            saveStore(store);
+            closeModal();
+            renderAllFolders();
+            renderTests(currentTestFolderId);
+            showToast(v === 'both' ? 'Bilingual — students can switch language' : (v === 'en' ? 'Students will only see English' : 'Students will only see Assamese'), 'success');
+        }
+
+        // ---- Admin: PDF button + exactly which options students get ----
+        function openPdfBtnSettings(testId) {
+            const t = getStore().tests.find(x => x.id === testId);
+            if (!t) return;
+            const o = pdfOptionsFor(t);
+            const lm = testLangMode(t);
+            const row = (id, checked, label, sub, disabled) => `<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--glass-border);border-radius:12px;cursor:pointer;${disabled ? 'opacity:.5;' : ''}">
+                <input type="checkbox" id="${id}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} style="width:20px;height:20px;margin-top:2px;accent-color:#f59e0b;">
+                <span><strong>${label}</strong><br><span style="font-size:12px;color:var(--text-secondary);">${sub}</span></span></label>`;
+            openModal(`
+                <div class="modal-header"><h3><i class="fas fa-file-pdf"></i> Student PDF options</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    ${row('pdfoShow', !!t.pdfDownloadVisible, 'Show Download PDF button', 'Students see the button on this mock')}
+                    ${row('pdfoEn', o.en, 'English', lm === 'as' ? 'Turned off — this mock is Assamese only' : 'Students can download the English PDF', lm === 'as')}
+                    ${row('pdfoAs', o.as, 'Assamese', lm === 'en' ? 'Turned off — this mock is English only' : 'Students can download the Assamese PDF', lm === 'en')}
+                    ${row('pdfoKey', o.answerKey, 'All options + Answer sheet', 'Every option listed, with an answer key table at the end (good for Reasoning / Maths). Off = correct option is marked on each question', false)}
+                    ${row('pdfoHints', o.hints, 'Hints', 'Students get an "Include hints" tick; hints for every question are listed at the END of the PDF', false)}
+                    <button class="btn btn-primary btn-block" onclick="savePdfBtnSettings('${testId}')"><i class="fas fa-save"></i> Save</button>
+                </div>`);
+        }
+        function savePdfBtnSettings(testId) {
+            const store = getStore();
+            const t = store.tests.find(x => x.id === testId);
+            if (!t) return;
+            const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
+            t.pdfDownloadVisible = g('pdfoShow');
+            t.pdfOptions = { en: g('pdfoEn'), as: g('pdfoAs'), answerKey: g('pdfoKey'), hints: g('pdfoHints') };
+            if (!t.pdfOptions.en && !t.pdfOptions.as) t.pdfOptions.en = true;
+            saveStore(store);
+            closeModal();
+            renderAllFolders();
+            renderTests(currentTestFolderId);
+            showToast('PDF options saved — press Upload PDF to prepare the files', 'success');
+        }
+
         function toggleTestPdfVisible(testId) {
             const store = getStore();
             const test = store.tests.find(t => t.id === testId);
@@ -14234,6 +14390,22 @@
             renderAllFolders();
             renderTests(currentTestFolderId);
             showToast(test.pdfLocked ? `PDF download locked — ₹${test.pdfPrice}` : 'PDF download unlocked — now free', 'success');
+        }
+
+        // Per-mock language: 'both' (default) | 'en' | 'as'. Set by admin.
+        function testLangMode(t) {
+            return (t && (t.langMode === 'en' || t.langMode === 'as')) ? t.langMode : 'both';
+        }
+        // What admin lets students pick for this mock's PDF (PDF Btn dialog).
+        // Defaults reproduce the old behaviour: both languages, "all options",
+        // hints available. Language mode narrows the languages further.
+        function pdfOptionsFor(t) {
+            const o = (t && t.pdfOptions && typeof t.pdfOptions === 'object') ? t.pdfOptions : {};
+            const lm = testLangMode(t);
+            let en = o.en !== false && lm !== 'as';
+            let as = o.as !== false && lm !== 'en';
+            if (!en && !as) en = true;
+            return { en, as, answerKey: !!o.answerKey, hints: o.hints !== false };
         }
 
         function isTestPdfUnlockedForMe(t) {
@@ -15278,7 +15450,8 @@
             hintsBtn.classList.toggle('hints-active', qnaHintsVisible);
 
             document.getElementById('qnaTitle').textContent = test.title;
-            const isBilingual = test.questions.some(q => q.question_as && q.question_as !== q.question_en);
+            const _lm = testLangMode(test); if (_lm !== 'both') qnaLang = _lm;
+            const isBilingual = _lm === 'both' && test.questions.some(q => q.question_as && q.question_as !== q.question_en);
             document.getElementById('qnaLangToggle').innerHTML = isBilingual ? `
                 <div class="test-lang-toggle" style="position:static;margin:0;">
                     <button class="active" data-lang="en" onclick="setQnaLanguage('en')" title="English">A</button>
@@ -15629,17 +15802,20 @@
             // download. If it isn't cached yet it gets built once, saved
             // to Drive, and every later student gets the saved copy.
             if (isTest && currentUser?.role !== 'admin') {
-                // Nothing to choose when it's English-only with no hints.
-                if (!isBilingual && !hasAnyHint) { submitStudentPdf('en'); return; }
+                // Exactly what admin ticked in the PDF Btn dialog — nothing more.
+                const po = pdfOptionsFor(source.data);
+                const canHint = po.hints && hasAnyHint;
+                if (po.en && !po.as && !canHint) { submitStudentPdf('en'); return; }
+                if (po.as && !po.en && !canHint) { submitStudentPdf('as'); return; }
                 openModal(`
                     <div class="modal-header"><h3><i class="fas fa-file-pdf"></i> Download PDF</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
                     <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px;">
-                        ${hasAnyHint ? `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--glass-border);border-radius:12px;cursor:pointer;font-size:14px;font-weight:600;">
+                        ${canHint ? `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--glass-border);border-radius:12px;cursor:pointer;font-size:14px;font-weight:600;">
                             <input type="checkbox" id="stuPdfDetail" style="width:20px;height:20px;accent-color:#f59e0b;">
-                            <span>Detailed info <span style="font-weight:400;color:var(--text-secondary);font-size:12px;">(adds the explanation / hint under each question)</span></span>
+                            <span>Include hints <span style="font-weight:400;color:var(--text-secondary);font-size:12px;">(hints of every question are added at the end)</span></span>
                         </label>` : ''}
-                        <button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('en')"><i class="fas fa-font"></i> English</button>
-                        ${isBilingual ? `<button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('as')"><i class="fas fa-font"></i> Assamese</button>` : ''}
+                        ${po.en ? `<button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('en')"><i class="fas fa-font"></i> English</button>` : ''}
+                        ${po.as ? `<button type="button" class="btn btn-primary btn-block" onclick="submitStudentPdf('as')"><i class="fas fa-font"></i> Assamese</button>` : ''}
                     </div>
                 `);
                 return;
@@ -15707,11 +15883,12 @@
 
         function submitStudentPdf(lang) {
             const cb = document.getElementById('stuPdfDetail');
-            const hints = !!(cb && cb.checked);
+            const hintsEnd = !!(cb && cb.checked);
+            const po = pdfOptionsFor(pdfPromptSource && pdfPromptSource.data);
             closeModal();
             // view:true → opens in the same in-app viewer the study material
             // uses (zoom / download / close), straight from Drive.
-            printQnaPdf(pdfPromptSource, { lang, mode: 'options', hints, view: true });
+            printQnaPdf(pdfPromptSource, { lang, mode: po.answerKey ? 'options-answerkey' : 'options', hints: false, hintsEnd, view: true });
         }
 
         function submitQnaPdfOptions() {
@@ -15785,8 +15962,14 @@
             if (!document.getElementById('bulkPdfPanel')) document.body.classList.remove('pdf-busy');
         }
 
+        function qnaPdfNameFor(title, opts) {
+            const lang = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
+            const extra = (opts.mode === 'options-answerkey' ? ', Answer sheet' : '') + ((opts.hints || opts.hintsEnd) ? ', Hints' : '');
+            return (title + ' (' + lang + extra + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
+        }
+
         function qnaPdfCacheKey(testId, opts) {
-            return testId + '::' + opts.lang + '::' + opts.mode + '::' + (opts.hints ? 'h1' : 'h0');
+            return testId + '::' + opts.lang + '::' + opts.mode + '::' + (opts.hints ? 'h1' : (opts.hintsEnd ? 'he' : 'h0'));
         }
 
         // Same device-specific delivery Materials' downloadCurrentPdf
@@ -15838,7 +16021,7 @@
             // "English" and "Assamese" versions save under the identical
             // name and silently overwrite each other.
             const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
-            const safeName = (title + ' (' + langLabel + (opts.hints ? ', Detailed' : '') + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
+            const safeName = qnaPdfNameFor(title, opts);
             const cacheKey = isTest ? qnaPdfCacheKey(source.data.id, opts) : null;
             const cachedFileId = cacheKey && source.data.qnaPdfDrive && source.data.qnaPdfDrive[cacheKey];
 
@@ -16117,6 +16300,9 @@
                 // on the true last page (the last answer-key page), not
                 // the last question page, whenever that section exists.
                 const hasAnswerKey = isTest && opts.mode === 'options-answerkey';
+                // Student "Include hints": every question's hint listed after
+                // everything else (not under each question).
+                const hasHintsEnd = isTest && !!opts.hintsEnd && questions.some(q => q.hint_en || q.hint_as);
 
                 // Header only on the first content page, footer only on the
                 // last — not repeated on every page.
@@ -16127,7 +16313,7 @@
                             <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
                             <div class="pdf-q-list">${blocks.map((bk, bi) => (pageIdx === pages.length - 1 && bi === blocks.length - 1) ? bk.replace('<hr class="pdf-rule-line">', '') : bk).join('')}</div>
                         </div>
-                        ${(pageIdx === pages.length - 1 && !hasAnswerKey) ? buildPdfPageFooterHtml() : ''}
+                        ${(pageIdx === pages.length - 1 && !hasAnswerKey && !hasHintsEnd) ? buildPdfPageFooterHtml() : ''}
                     </div>`);
                 });
 
@@ -16158,7 +16344,39 @@
                                 ${pageIdx === 0 ? '<div class="pdf-ak-heading">Answer Key</div>' : ''}
                                 <div class="pdf-ak-grid">${items.join('')}</div>
                             </div>
-                            ${pageIdx === akPages.length - 1 ? buildPdfPageFooterHtml() : ''}
+                            ${(pageIdx === akPages.length - 1 && !hasHintsEnd) ? buildPdfPageFooterHtml() : ''}
+                        </div>`);
+                    });
+                }
+
+                if (hasHintsEnd) {
+                    const hintItems = [];
+                    questions.forEach((q, i) => {
+                        const useAs = opts.lang === 'as';
+                        const text = useAs ? (q.hint_as || q.hint_en) : (q.hint_en || q.hint_as);
+                        if (!text) return;
+                        const asClass = (useAs && q.hint_as) ? ' as' : '';
+                        hintItems.push(`<div class="pdf-hint-item${asClass}"><span class="pdf-ak-num">${i + 1}.</span><span>${pdfEsc(text)}</span></div>`);
+                    });
+                    const hPages = [[]];
+                    let hh = 0;
+                    const headingH = 44;
+                    hintItems.forEach(item => {
+                        measure.innerHTML = item;
+                        const ih = measure.firstElementChild.offsetHeight + 12;
+                        const budget = maxListHeight - (hPages.length === 1 ? headingH : 0);
+                        if (hh + ih > budget && hPages[hPages.length - 1].length > 0) { hPages.push([]); hh = 0; }
+                        hPages[hPages.length - 1].push(item);
+                        hh += ih;
+                    });
+                    hPages.forEach((items, pageIdx) => {
+                        pageHtmls.push(`<div class="pdf-page pdf-content-page">
+                            <div class="pdf-doc-body">
+                                <div class="pdf-watermark"><span>DEKA SIR CLASSES</span></div>
+                                ${pageIdx === 0 ? '<div class="pdf-ak-heading">Hints</div>' : ''}
+                                <div>${items.join('')}</div>
+                            </div>
+                            ${pageIdx === hPages.length - 1 ? buildPdfPageFooterHtml() : ''}
                         </div>`);
                     });
                 }
@@ -16345,14 +16563,22 @@
         // of silently serving the old content forever.
         let bulkPdfCancelRequested = false;
 
-        // Only the two versions students can ask for: English and
-        // Assamese, each with All options (+ hints when the test has any).
+        // The versions students can ask for, from the PDF Btn dialog: each
+        // enabled language, in "All options" (or "All options + Answer sheet"),
+        // plus a version with the hints listed at the end when hints are on.
         function qnaPdfCombosForTest(test) {
-            // Hints are deliberately never part of the student/cached PDFs.
-            return [
-                { lang: 'en', mode: 'options', hints: false },
-                { lang: 'as', mode: 'options', hints: false }
-            ];
+            const po = pdfOptionsFor(test);
+            const mode = po.answerKey ? 'options-answerkey' : 'options';
+            const hasHints = (test.questions || []).some(q => q.hint_en || q.hint_as);
+            const langs = [];
+            if (po.en) langs.push('en');
+            if (po.as) langs.push('as');
+            const combos = [];
+            langs.forEach(lang => {
+                combos.push({ lang, mode, hints: false, hintsEnd: false });
+                if (po.hints && hasHints) combos.push({ lang, mode, hints: false, hintsEnd: true });
+            });
+            return combos;
         }
 
         function showBulkPdfPanel() {
@@ -16411,7 +16637,7 @@
             const hasExisting = test.qnaPdfDrive && Object.keys(test.qnaPdfDrive).length > 0;
             const msg = hasExisting
                 ? `Re-generate the English and Assamese PDFs of "${test.title}"? The ${Object.keys(test.qnaPdfDrive).length} already-cached version(s) will be deleted from Drive and replaced with fresh ones built from the test's current questions.`
-                : `Generate and cache the two student PDFs of "${test.title}" — English and Assamese, each with all options (no hints)?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
+                : `Generate and cache the student PDFs (as set in the PDF Btn options) of "${test.title}" — the languages and options you ticked, including the hint versions?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
             if (!confirm(msg)) return;
             regenerateTestQnaPdfs(testId, { manual: true });
         }
@@ -16481,15 +16707,15 @@
                     if (bulkPdfCancelRequested) break;
                     const opts = combos[ci];
                     const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
-                    const modeLabel = opts.mode === 'options' ? 'All options' : 'Answer only';
+                    const modeLabel = opts.mode === 'options' ? 'All options' : (opts.mode === 'options-answerkey' ? 'All options + answer sheet' : 'Answer only');
                     updateBulkPdfPanel(
                         `Updating cached PDFs... (${ci}/${combos.length})`,
-                        `${langLabel}, ${modeLabel}${opts.hints ? ' + hints' : ''}`,
+                        `${langLabel}, ${modeLabel}${(opts.hints || opts.hintsEnd) ? ' + hints' : ''}`,
                         ((ci + 1) / combos.length) * 100
                     );
                     const cacheKey = qnaPdfCacheKey(test.id, opts);
                     const title = test.title || 'Mock Test';
-                    const safeName = (title + ' (' + langLabel + ')').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Question Paper';
+                    const safeName = qnaPdfNameFor(title, opts);
                     const ok = await generateAndDeliverQnaPdf({ type: 'test', data: test }, opts, title, safeName, cacheKey, false, false, folderPath);
                     if (ok) generated++; else if (!bulkPdfCancelRequested) failed++;
                 }
