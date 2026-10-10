@@ -785,7 +785,7 @@
             border-bottom: 1px solid var(--glass-border);
             padding: 6px 12px 8px;
             transition: all 0.4s;
-            min-height: var(--header-height);
+            min-height: 0;
         }
 
         .header-row {
@@ -4301,6 +4301,7 @@
             display: flex; align-items: center; justify-content: center; color: #5b5646;
         }
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-tag { background: #fff; border: 1.5px solid #2f6b45; color: #a9a9a9; }
+        #qnaPdfPrintArea .pdf-q-img.pdf-q-img-full { width: 100%; max-width: 100%; height: auto; max-height: 840px; object-fit: contain; margin: 0; border: none; }
         #qnaPdfPrintArea .pdf-q-opt.correct .pdf-opt-txt { color: #2f6b45; font-weight: 600; }
         #qnaPdfPrintArea .pdf-answer-box { margin-top: 4px; font-size: 15.5px; color: #2f6b45; font-weight: 600; line-height: 1.45; }
         #qnaPdfPrintArea .pdf-answer-box.as { font-family: 'Noto Sans Bengali', sans-serif; }
@@ -5311,6 +5312,29 @@
                 scheduleFirestoreRetry();
             }
         }
+
+        // The header is position:fixed, so the page reserves room for it with a
+        // fixed 90px. On a PC the header (bigger logo + title + labelled
+        // buttons) is much taller than that, so it sat ON TOP of the search
+        // bar. Measure the real height and use it instead — and keep it
+        // updated when the window or the buttons change.
+        (function fitHeaderHeight() {
+            const run = () => {
+                const h = document.querySelector('.header');
+                if (!h) return;
+                const px = Math.ceil(h.getBoundingClientRect().height);
+                if (px > 0) document.documentElement.style.setProperty('--header-height', px + 'px');
+            };
+            run();
+            window.addEventListener('load', run);
+            window.addEventListener('resize', run);
+            window.addEventListener('orientationchange', run);
+            document.addEventListener('DOMContentLoaded', () => {
+                run();
+                const h = document.querySelector('.header');
+                if (h && window.ResizeObserver) new ResizeObserver(run).observe(h);
+            });
+        })();
 
         let storeEditVersion = 0; // bumped on every admin save; lets a slow push know newer edits exist
         function saveStore(store) {
@@ -15496,6 +15520,7 @@
                 const opts = q[`options_${lang}`] || q.options_en || q.options || [];
                 const hint = q[`hint_${lang}`] || q.hint_en || '';
                 const imageUrl = q.image || '';
+                const hasRealOpts = opts.some(o => String(o == null ? '' : o).trim());
                 // #7 continued: same card template as Answer Key
                 // (.review-q-card/.review-opt) instead of a separately
                 // styled card, so the two genuinely look identical, not
@@ -15507,13 +15532,13 @@
                     <div class="review-q-card" id="qnaQ${idx}" style="animation-delay:${Math.min(idx * 0.04, 0.4)}s;">
                         <div class="review-q-header"><span>Q${idx+1}</span></div>
                         <div class="review-q-text">${escapeHtml(qText)}</div>
-                        ${imageUrl ? `<img src="${escapeHtml(driveImageSrc(imageUrl))}" class="q-image" style="max-height:180px;" alt="" onerror="handleDriveImgError(this,'${imageUrl.replace(/'/g, "\\'")}')" />` : ''}
-                        <div class="review-options">
+                        ${imageUrl ? `<img src="${escapeHtml(driveImageSrc(imageUrl))}" class="q-image" style="max-height:${(!qText && !hasRealOpts) ? '75vh' : '180px'};" alt="" onerror="handleDriveImgError(this,'${imageUrl.replace(/'/g, "\\'")}')" />` : ''}
+                        ${hasRealOpts ? `<div class="review-options">
                             ${optsToShow.map((opt) => {
                                 const oIdx = opts.indexOf(opt);
                                 return `<div class="review-opt ${oIdx === q.correctAnswer ? 'review-opt-correct' : ''}"><span class="review-opt-letter">${oIdx+1}</span> ${escapeHtml(opt)} ${oIdx === q.correctAnswer ? '<span class="review-opt-icon" style="color:#10b981;"><i class="fas fa-check"></i></span>' : ''}</div>`;
                             }).join('')}
-                        </div>
+                        </div>` : ''}
                         ${hint ? `
                         <div class="qna-hint-box" style="display:${qnaHintsVisible ? 'flex' : 'none'};"><i class="fas fa-lightbulb" style="color:#f59e0b;"></i><span>${escapeHtml(hint)}</span></div>
                         ` : ''}
@@ -15685,18 +15710,25 @@
 
         function buildPdfQBlockHtml(q, idx, isTest, opts) {
             const qHtml = pdfTextBlockHtml(opts.lang, q.question_en, q.question_as, 'pdf-q-text');
-            let html = `<div class="pdf-q-block">
+            // A question that is only a picture (e.g. a reading passage): no
+            // option / answer boxes at all, and the picture is shown big
+            // enough to fill the whole page.
+            const hasRealOpts = [].concat(q.options_en || q.options || [], q.options_as || []).some(o => String(o == null ? '' : o).trim());
+            const imageOnly = !!q.image && !String(q.question_en || '').trim() && !String(q.question_as || '').trim() && !hasRealOpts;
+            let html = `<div class="pdf-q-block${imageOnly ? ' pdf-q-full' : ''}">
                 <div class="pdf-q-top">
                     <div class="pdf-q-num">${idx + 1}</div>
                     <div class="pdf-q-body">
                         ${qHtml}`;
             if (q.image) {
-                html += `<img class="pdf-q-img" src="${pdfEsc(driveImageSrc(q.image))}" onerror="this.style.display='none'" alt="">`;
+                html += `<img class="pdf-q-img${imageOnly ? ' pdf-q-img-full' : ''}" src="${pdfEsc(driveImageSrc(q.image))}" onerror="this.style.display='none'" alt="">`;
             }
             if (isTest) {
                 const optsEn = q.options_en || q.options || [];
                 const optsAs = q.options_as || [];
-                if (opts.mode === 'options' || opts.mode === 'options-answerkey') {
+                if (!hasRealOpts) {
+                    // nothing to list — no empty A/B/C/D boxes, no answer line
+                } else if (opts.mode === 'options' || opts.mode === 'options-answerkey') {
                     // options-answerkey deliberately never adds the
                     // 'correct' class here — that's the whole point of
                     // this mode (see the answer-key section appended
@@ -16023,7 +16055,26 @@
             const langLabel = opts.lang === 'as' ? 'Assamese' : (opts.lang === 'both' ? 'Bilingual' : 'English');
             const safeName = qnaPdfNameFor(title, opts);
             const cacheKey = isTest ? qnaPdfCacheKey(source.data.id, opts) : null;
-            const cachedFileId = cacheKey && source.data.qnaPdfDrive && source.data.qnaPdfDrive[cacheKey];
+            let cachedFileId = cacheKey && source.data.qnaPdfDrive && source.data.qnaPdfDrive[cacheKey];
+
+            // THE "IT REGENERATES EVEN THOUGH THE FILE IS IN DRIVE" BUG: copies
+            // saved by a STUDENT are recorded on the Sheet only (students can't
+            // write to Firestore), but this page reads tests from Firestore —
+            // so on the next visit the saved copy looked like it didn't
+            // exist and the whole PDF was rebuilt and uploaded again. Ask the
+            // server (one small call) before building anything.
+            if (!cachedFileId && cacheKey && source.data.id) {
+                try {
+                    showPdfProgress('Checking for a saved copy...');
+                    const lk = await apiPost({ action: 'getQnaPdfId', testId: source.data.id, cacheKey }, 20000);
+                    if (lk && lk.success && lk.fileId) {
+                        cachedFileId = lk.fileId;
+                        source.data.qnaPdfDrive = source.data.qnaPdfDrive || {};
+                        source.data.qnaPdfDrive[cacheKey] = lk.fileId;
+                    }
+                } catch (_) {}
+                hidePdfProgress();
+            }
 
             if (cachedFileId && opts.view) {
                 openPdfViewer(cachedFileId, safeName, true);
