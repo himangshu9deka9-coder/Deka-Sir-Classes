@@ -3086,8 +3086,54 @@
            width instead, so "100%" resolves to something card-sized
            again rather than the full 1200px .main-content — this was
            the huge, mostly-empty box on wider screens. */
+        /* ================= PC / LARGE-SCREEN DASHBOARD =================
+           On a wide window the phone layout left one narrow card on the left
+           and empty space everywhere else, with a full-width nav bar whose
+           tiny labels were stretched across the whole screen. Here: sections
+           sit side by side, the lifetime banner is a proper hero, and the
+           nav becomes a compact floating bar in the middle. */
         @media (min-width: 900px) {
-            .featured-slider { max-width: 560px; }
+            .dash-search-wrap { max-width: 760px; margin-left: auto; margin-right: auto; margin-bottom: 22px; }
+            .dash-search-bar { font-size: 16px; }
+
+            .lifetime-banner { padding: 22px 32px; margin: 0 0 26px; border-radius: 22px; }
+            .lifetime-crown { width: 56px; height: 56px; font-size: 26px; }
+            .lifetime-title { font-size: 20px; }
+            .lifetime-sub { font-size: 13px; margin-top: 5px; }
+            .lifetime-go { font-size: 22px; }
+            .lifetime-banner:hover { transform: translateY(-2px); box-shadow: 0 16px 44px rgba(239, 68, 68, 0.45); }
+
+            .featured-sliders-row {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 24px;
+                align-items: start;
+            }
+            .featured-slider { max-width: none; padding: 18px 20px; }
+            .featured-slider-head { font-size: 15px; margin-bottom: 14px; }
+            .featured-slide-title { font-size: 17px; }
+            .featured-slide-sub { font-size: 13px; }
+            .featured-slide-body { padding: 14px 16px 12px; }
+            .featured-slide-actions { padding: 0 16px 16px; gap: 10px; }
+            .featured-slide-actions .btn { padding: 10px 12px; font-size: 14px; }
+            .featured-slide:hover { transform: translateY(-2px); }
+
+            /* Footer nav: floating, centred, readable */
+            .bottom-nav {
+                left: 0; right: 0; margin: 0 auto;
+                width: min(620px, calc(100% - 48px));
+                bottom: 18px;
+                padding: 8px 10px;
+                border: 1px solid var(--glass-border);
+                border-radius: 22px;
+                box-shadow: 0 14px 44px rgba(0, 0, 0, 0.22);
+            }
+            .bottom-nav a { flex-direction: row; gap: 9px; padding: 11px 8px; font-size: 14px; letter-spacing: 0; }
+            .bottom-nav a i { font-size: 18px; }
+            .bottom-nav a:hover { background: rgba(245, 158, 11, 0.08); }
+        }
+        @media (min-width: 1500px) {
+            .featured-sliders-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         }
         .featured-slide-thumb {
             width: 100%;
