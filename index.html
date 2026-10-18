@@ -4186,26 +4186,12 @@
         .header .header-row-top { display: contents; }
         .header .header-left-logo { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
         .header .header-left-logo .logo-img,
-        .header .header-left-logo .logo-placeholder,
-        .header .header-profile-btn { width: var(--hdr-circle); height: var(--hdr-circle); }
+        .header .header-left-logo .logo-placeholder { width: var(--hdr-circle); height: var(--hdr-circle); }
         .header .header-brand { grid-column: 2; grid-row: 1; padding: 0; min-width: 0; align-self: end; }
         .header .header-row-bottom { grid-column: 2; grid-row: 2; padding: 0; gap: 6px; align-self: start; }
         /* An older rule forces every .header-row to 96vw; inside the grid the buttons row must just fill the middle column. */
         .header .header-row-bottom { width: auto !important; max-width: none !important; margin: 0 !important; min-width: 0; }
-        .header .header-profile-btn {
-            grid-column: 3; grid-row: 1 / span 2; align-self: center; justify-self: end;
-            border-radius: 50%; padding: 0; cursor: pointer; flex: 0 0 auto;
-            display: flex; align-items: center; justify-content: center;
-            font-family: var(--font-display); font-weight: 800; font-size: calc(var(--hdr-circle) * 0.42);
-            line-height: 1; color: #fff; border: 1px solid var(--glass-border);
-            background: linear-gradient(135deg, #f59e0b, #ec4899 60%, #8b5cf6);
-            box-shadow: 0 4px 14px rgba(236, 72, 153, 0.25);
-            transition: var(--transition);
-            -webkit-tap-highlight-color: transparent;
-        }
-        .header .header-profile-btn:active { transform: scale(0.95); }
-        .header .header-profile-btn.guest { background: var(--glass-bg); color: var(--text-secondary); box-shadow: none; border: 1px dashed var(--glass-border); font-size: calc(var(--hdr-circle) * 0.36); }
-        .header .header-profile-btn.admin { background: linear-gradient(135deg, #f59e0b, #b45309); font-size: calc(var(--hdr-circle) * 0.38); }
+        .header .header-profile-spacer { grid-column: 3; grid-row: 1 / span 2; width: var(--hdr-circle); height: var(--hdr-circle); pointer-events: none; }
         @media (max-width: 380px) { .header { --hdr-circle: 54px; } }
         @media (min-width: 600px) { .header { --hdr-circle: 84px; column-gap: 12px; } .header .header-row-bottom { gap: 12px; } }
         @media (min-width: 900px) { .header { --hdr-circle: 96px; } }
@@ -4748,7 +4734,7 @@
                 <span class="estd">ESTD.2021</span>
                 <h1>DEKA SIR CLASSES</h1>
             </div>
-            <button type="button" class="header-profile-btn guest" id="headerProfileBtn" onclick="onHeaderProfileClick()" title="Sign in"><i class="fas fa-user"></i></button>
+            <div class="header-profile-spacer" aria-hidden="true"></div> <!-- keeps the title + buttons centred opposite the logo -->
         </div>
         <div class="header-row header-row-bottom">
             <button class="hamburger" id="hamburgerBtn" aria-label="Menu">
@@ -7766,29 +7752,7 @@
             showToast('Logged out', 'info');
         }
 
-        function onHeaderProfileClick() {
-            if (!currentUser) { openLoginFromGuest('student'); return; }
-            openMyAccount();
-        }
-
-        // The round Admin / User button on the right of the header.
-        function updateHeaderProfileBtn() {
-            const b = document.getElementById('headerProfileBtn');
-            if (!b) return;
-            if (!currentUser) {
-                b.className = 'header-profile-btn guest';
-                b.title = 'Sign in';
-                b.innerHTML = '<i class="fas fa-user"></i>';
-                return;
-            }
-            const admin = currentUser.role === 'admin';
-            b.className = 'header-profile-btn ' + (admin ? 'admin' : 'student');
-            b.title = admin ? 'Admin — ' + currentUser.name : currentUser.name;
-            b.innerHTML = admin ? '<i class="fas fa-crown"></i>' : escapeHtml((currentUser.name || '?').charAt(0).toUpperCase());
-        }
-
         function updateUI() {
-            updateHeaderProfileBtn();
             const isGuest = !currentUser;
             if (currentUser) {
                 document.getElementById('headerUserName').textContent = currentUser.name;
