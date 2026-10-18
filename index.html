@@ -35,7 +35,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
         import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, writeBatch, query, where } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendEmailVerification } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendEmailVerification, EmailAuthProvider, reauthenticateWithCredential, updatePassword } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDVKEABR6sNudb8VxreOuxxPB4AIbNvZAw",
@@ -94,6 +94,21 @@
         // confirmed is correct. Either way this NEVER blocks the
         // student's login — a bridging failure is only ever logged, not
         // shown to them, since the old system already let them in.
+        // Settings → change password. Students normally sign in through
+        // Firebase Auth first, so its stored password must change too —
+        // otherwise the OLD password would keep working there.
+        window.changeFirebasePassword = async function (email, oldPassword, newPassword) {
+            const pad = p => (p.length < 6 ? (p + '_dsc00').slice(0, 6) : p);
+            let user = window.auth.currentUser;
+            if (user && user.email && user.email.toLowerCase() === String(email).toLowerCase()) {
+                await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, pad(oldPassword)));
+            } else {
+                const cred = await signInWithEmailAndPassword(window.auth, email, pad(oldPassword));
+                user = cred.user;
+            }
+            await updatePassword(user, pad(newPassword));
+        };
+
         window.bridgeStudentToFirebaseAuth = async function (email, password) {
             if (!email || !password) return;
             // Firebase Auth hard-requires 6+ characters — some existing
@@ -218,6 +233,33 @@
                 if (err?.code === 'auth/email-already-in-use') msg = 'An account with this email already exists — try signing in, or use "Forgot password".';
                 else if (err?.code === 'auth/invalid-email') msg = 'Enter a valid email address';
                 else if (err?.code === 'auth/weak-password') msg = 'Password must be at least 6 characters';
+                return { success: false, error: msg, code: err?.code };
+            }
+        };
+
+        // Used by the emailed-code signup: the email was already verified
+        // with the 6-digit code, so this just creates (or re-uses) the
+        // Firebase account — no Firebase verification email is sent.
+        window.fetchFirebaseSignupCreateVerified = async function (email, password) {
+            if (!window.auth) return { success: false, error: 'Firebase not ready — try again in a moment' };
+            const fbPassword = password.length < 6 ? (password + '_dsc00').slice(0, 6) : password;
+            try {
+                await createUserWithEmailAndPassword(window.auth, email, fbPassword);
+                return { success: true };
+            } catch (err) {
+                if (err?.code === 'auth/email-already-in-use') {
+                    // Leftover account from an earlier, unfinished signup — fine if the password matches.
+                    try {
+                        await signInWithEmailAndPassword(window.auth, email, fbPassword);
+                        return { success: true };
+                    } catch (_) {
+                        return { success: false, error: 'This email already has a login — use "Forgot password" on the sign-in screen.' };
+                    }
+                }
+                let msg = 'Could not create account';
+                if (err?.code === 'auth/invalid-email') msg = 'Enter a valid email address';
+                else if (err?.code === 'auth/weak-password') msg = 'Password must be at least 6 characters';
+                else if (err?.code === 'auth/network-request-failed') msg = 'Network problem — check your connection and try again';
                 return { success: false, error: msg, code: err?.code };
             }
         };
@@ -2788,6 +2830,70 @@
             text-decoration: none;
         }
 
+        /* ===== Futuristic sign-up (signup panels + OTP boxes) ===== */
+        .login-box.su-mode {
+            border: 1px solid transparent;
+            background:
+                linear-gradient(var(--surface-solid), var(--surface-solid)) padding-box,
+                linear-gradient(135deg, #f59e0b, #ec4899, #8b5cf6, #06b6d4) border-box;
+            box-shadow: 0 0 38px rgba(139, 92, 246, 0.20), var(--shadow-lg);
+        }
+        .su-fut { position: relative; }
+        .su-fut::before {
+            content: ''; position: absolute; top: -6px; left: 0; width: 38%; height: 2px; border-radius: 2px;
+            background: linear-gradient(90deg, transparent, #8b5cf6, #06b6d4, transparent);
+            animation: suScanBar 2.8s ease-in-out infinite;
+        }
+        @keyframes suScanBar { 0% { transform: translateX(-30%); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateX(260%); opacity: 0; } }
+        .su-steps { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 2px 0 14px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
+        .su-step { display: flex; align-items: center; gap: 6px; opacity: 0.55; }
+        .su-step span { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; border: 1.5px solid var(--glass-border); }
+        .su-step.active { opacity: 1; color: var(--text-primary); }
+        .su-step.active span { background: linear-gradient(135deg, #8b5cf6, #06b6d4); border-color: transparent; color: #fff; box-shadow: 0 0 14px rgba(139, 92, 246, 0.55); }
+        .su-step.done span { background: #22c55e; border-color: transparent; color: #fff; }
+        .su-step-line { width: 34px; height: 2px; border-radius: 2px; background: var(--glass-border); }
+        .su-step-line.done { background: linear-gradient(90deg, #8b5cf6, #06b6d4); }
+        .su-title { font-size: 17px; font-weight: 800; text-align: center; margin-bottom: 4px; background: linear-gradient(135deg, #f59e0b, #ec4899 55%, #8b5cf6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .su-sub { font-size: 12.5px; color: var(--text-secondary); text-align: center; margin-bottom: 12px; line-height: 1.5; }
+        .su-fut .form-group { margin-bottom: 12px; }
+        .su-fut .form-group label { font-size: 10.5px; letter-spacing: 1.1px; text-transform: uppercase; }
+        .su-inwrap { position: relative; }
+        .su-inwrap > i.su-ic { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--text-secondary); transition: color 0.2s; pointer-events: none; }
+        .su-inwrap:focus-within > i.su-ic { color: #8b5cf6; }
+        .su-fut .su-inwrap input { padding: 12px 40px 12px 38px; border-radius: 12px; background: rgba(139, 92, 246, 0.05); }
+        .su-fut .su-inwrap input:focus { border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18), 0 0 18px rgba(139, 92, 246, 0.28); }
+        .su-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; border-radius: 8px; }
+        .login-form-panel .su-btn { position: relative; overflow: hidden; border: 0; border-radius: 12px; padding: 13px 16px; font-weight: 800; letter-spacing: 0.4px; color: #fff; cursor: pointer; background: linear-gradient(135deg, #f59e0b, #ec4899 55%, #8b5cf6); box-shadow: 0 8px 22px rgba(139, 92, 246, 0.35); transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s; }
+        .login-form-panel .su-btn::after { content: ''; position: absolute; top: 0; left: -60%; width: 40%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent); transform: skewX(-20deg); animation: suShine 3.2s ease-in-out infinite; }
+        @keyframes suShine { 0%, 55% { left: -60%; } 100% { left: 130%; } }
+        .login-form-panel .su-btn:active { transform: scale(0.98); }
+        .login-form-panel .su-btn:disabled { opacity: 0.65; cursor: wait; }
+        .su-btn-ghost { background: transparent !important; color: var(--text-primary) !important; border: 1px solid var(--glass-border) !important; box-shadow: none !important; }
+        .su-btn-ghost::after { display: none; }
+        .su-chip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; padding: 2px 10px; border-radius: 20px; background: rgba(139, 92, 246, 0.12); border: 1px solid rgba(139, 92, 246, 0.35); color: var(--text-primary); font-weight: 700; }
+        /* OTP boxes */
+        .su-otp { display: flex; gap: 8px; justify-content: center; margin: 14px 0 6px; position: relative; perspective: 600px; }
+        .su-otp-box { width: 46px; height: 56px; flex: 0 1 46px; min-width: 0; text-align: center; font-size: 24px; font-weight: 800; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; border-radius: 12px; border: 1.5px solid var(--glass-border); background: rgba(139, 92, 246, 0.06); color: var(--text-primary); caret-color: #8b5cf6; padding: 0; transition: border-color 0.2s, box-shadow 0.2s, background 0.2s, transform 0.2s; }
+        .su-otp.su-enter .su-otp-box { animation: suPop 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both; animation-delay: calc(var(--i) * 70ms); }
+        @keyframes suPop { from { opacity: 0; transform: translateY(16px) scale(0.6) rotateX(70deg); } to { opacity: 1; transform: none; } }
+        .su-otp-box.filled { border-color: #f59e0b; background: rgba(245, 158, 11, 0.10); animation: suBump 0.28s ease; }
+        @keyframes suBump { 0% { transform: scale(1); } 45% { transform: scale(1.18); } 100% { transform: scale(1); } }
+        .su-otp-box:focus { outline: none; border-color: #8b5cf6; transform: translateY(-2px) scale(1.06); animation: suPulse 1.4s ease-in-out infinite; }
+        @keyframes suPulse { 0%, 100% { box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18), 0 0 14px rgba(139, 92, 246, 0.35); } 50% { box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.22), 0 0 26px rgba(6, 182, 212, 0.55); } }
+        .su-otp.err .su-otp-box { border-color: #ef4444; background: rgba(239, 68, 68, 0.08); box-shadow: 0 0 16px rgba(239, 68, 68, 0.45); animation: none; }
+        .su-otp.shake { animation: suShake 0.45s ease; }
+        @keyframes suShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-9px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-6px); } 80% { transform: translateX(4px); } }
+        .su-otp.verifying::after { content: ''; position: absolute; top: 0; bottom: 0; left: -40px; width: 40px; pointer-events: none; background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.5), transparent); animation: suScanOtp 0.9s linear infinite; }
+        @keyframes suScanOtp { to { left: 100%; } }
+        .su-otp-box.ok { border-color: #22c55e; background: rgba(34, 197, 94, 0.14); color: #16a34a; box-shadow: 0 0 18px rgba(34, 197, 94, 0.5); animation: suOk 0.5s ease both; }
+        @keyframes suOk { 0% { transform: scale(1) rotateX(0); } 50% { transform: scale(1.18) rotateX(90deg); } 100% { transform: scale(1) rotateX(0); } }
+        .su-timer { text-align: center; font-size: 12px; color: var(--text-secondary); min-height: 18px; margin: 4px 0 8px; }
+        .su-hint { margin: 12px 0 4px; padding: 9px 12px; border-radius: 12px; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); background: rgba(6, 182, 212, 0.07); border: 1px dashed rgba(6, 182, 212, 0.4); text-align: center; }
+        @media (max-width: 360px) { .su-otp { gap: 6px; } .su-otp-box { height: 50px; font-size: 21px; } }
+        @media (prefers-reduced-motion: reduce) {
+            .su-fut::before, .su-btn::after, .su-otp-box, .su-otp, .su-otp::after { animation: none !important; transition: none !important; }
+        }
+
         .login-box .logo-icon {
             font-size: 40px;
             background: var(--gradient-glow);
@@ -4475,33 +4581,41 @@
             </div>
 
             <!-- STUDENT: Sign Up — Step 1: details + send OTP -->
-            <div id="signupStep1" class="login-form-panel" style="display:none;">
+            <div id="signupStep1" class="login-form-panel su-fut" style="display:none;">
+                <div class="su-steps"><div class="su-step active"><span>1</span> Details</div><div class="su-step-line"></div><div class="su-step"><span>2</span> Verify</div></div>
+                <div class="su-title">Create your account</div>
+                <p class="su-sub">Join in seconds — we'll email you a 6-digit code to confirm it's you.</p>
                 <div class="form-group">
                     <label>Your Name</label>
-                    <input type="text" id="signupName" placeholder="e.g. Ravi Kumar" />
+                    <div class="su-inwrap"><i class="fas fa-user su-ic"></i><input type="text" id="signupName" placeholder="e.g. Ravi Kumar" autocomplete="name" /></div>
                 </div>
                 <div class="form-group">
                     <label>Gmail Address</label>
-                    <input type="email" id="signupEmail" placeholder="you@gmail.com" autocomplete="email" />
+                    <div class="su-inwrap"><i class="fas fa-envelope su-ic"></i><input type="email" id="signupEmail" placeholder="you@gmail.com" autocomplete="email" /></div>
                 </div>
                 <div class="form-group">
-                    <label>Phone Number</label>
-                    <input type="tel" id="signupPhone" placeholder="98765 43210" autocomplete="tel" />
+                    <label>WhatsApp Number</label>
+                    <div class="su-inwrap"><i class="fab fa-whatsapp su-ic"></i><input type="tel" id="signupPhone" placeholder="98765 43210" autocomplete="tel" /></div>
                 </div>
                 <div class="form-group">
                     <label>Choose a Password</label>
-                    <input type="password" id="signupPassword" placeholder="At least 6 characters" autocomplete="new-password" />
+                    <div class="su-inwrap"><i class="fas fa-lock su-ic"></i><input type="password" id="signupPassword" placeholder="At least 6 characters" autocomplete="new-password" onkeydown="if(event.key==='Enter'){submitSignupStep1();}" /><button type="button" class="su-eye" aria-label="Show password" onclick="toggleSignupPassword(this)"><i class="fas fa-eye"></i></button></div>
                 </div>
-                <button type="button" class="btn btn-accent btn-block" onclick="submitSignupStep1()"><i class="fas fa-paper-plane"></i> Create Account</button>
-                <p class="demo-hint">Already have an account? <a href="#" onclick="showStudentLogin(); return false;">Sign in</a></p>
+                <button type="button" class="btn su-btn btn-block" id="signupSendBtn" onclick="submitSignupStep1()"><i class="fas fa-paper-plane"></i> Send Verification Code</button>
+                <p class="demo-hint" style="margin-top:12px;">Already have an account? <a href="#" onclick="showStudentLogin(); return false;">Sign in</a></p>
             </div>
 
-            <!-- STUDENT: Sign Up — Step 2: waiting for the email verification link -->
-            <div id="signupStep2" class="login-form-panel" style="display:none;">
-                <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">We sent a verification link to <strong id="signupEmailDisplay"></strong>. Open it on this device or any other — this page checks automatically and continues the moment it's confirmed.</p>
-                <div style="text-align:center;padding:10px 0;"><i class="fas fa-circle-notch fa-spin" style="font-size:22px;color:var(--accent-color, #f59e0b);"></i></div>
-                <button type="button" class="btn btn-accent btn-block" onclick="checkSignupVerified(true)"><i class="fas fa-rotate"></i> I've clicked the link — Continue</button>
-                <p class="demo-hint"><a href="#" onclick="resendSignupVerification(); return false;">Resend email</a> · <a href="#" onclick="showStudentSignupStep1(); return false;">Change email</a></p>
+            <!-- STUDENT: Sign Up — Step 2: enter the emailed 6-digit code -->
+            <div id="signupStep2" class="login-form-panel su-fut" style="display:none;">
+                <div class="su-steps"><div class="su-step done"><span><i class="fas fa-check" style="font-size:9px;"></i></span> Details</div><div class="su-step-line done"></div><div class="su-step active"><span>2</span> Verify</div></div>
+                <div class="su-title">Enter your code</div>
+                <p class="su-sub">We emailed a 6-digit code to<br><span class="su-chip" id="signupEmailDisplay"></span></p>
+                <div class="su-otp su-enter" id="signupOtpBoxes"><input type="text" class="su-otp-box" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" aria-label="Digit 1" style="--i:0" /><input type="text" class="su-otp-box" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" aria-label="Digit 2" style="--i:1" /><input type="text" class="su-otp-box" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" aria-label="Digit 3" style="--i:2" /><input type="text" class="su-otp-box" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" aria-label="Digit 4" style="--i:3" /><input type="text" class="su-otp-box" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" aria-label="Digit 5" style="--i:4" /><input type="text" class="su-otp-box" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" aria-label="Digit 6" style="--i:5" /></div>
+                <p class="su-timer" id="signupTimerText"></p>
+                <button type="button" class="btn su-btn btn-block" id="signupVerifyBtn" onclick="verifySignupOtpEntered()"><i class="fas fa-shield-halved"></i> Verify &amp; Create Account</button>
+                <button type="button" class="btn su-btn su-btn-ghost btn-block" id="signupRetryBtn" style="display:none;" onclick="finishSignupAfterOtp()"><i class="fas fa-rotate"></i> Finish setting up my account</button>
+                <div class="su-hint">📬 Can't see it? Check your <strong>Spam</strong> or <strong>Promotions</strong> folder and tap <strong>Not spam</strong> — the sender is <strong>DEKA SIR CLASSES</strong>.</div>
+                <p class="demo-hint" style="margin-top:10px;"><a href="#" id="signupResendLink" onclick="resendSignupOtp(); return false;">Resend code</a> · <a href="#" onclick="showStudentSignupStep1(); return false;">Change email</a></p>
             </div>
 
             <!-- ADMIN -->
@@ -4611,17 +4725,7 @@
                 <button id="myAccountAdminResultsBtn" class="btn btn-secondary btn-sm" onclick="closeMyAccount(); switchTab('results');"><i class="fas fa-clipboard-list"></i> Results</button>
             </div>
             <div id="myAccountContentWrap">
-                <div class="review-filter-tabs">
-                    <button class="review-filter-tab active" data-tab="tests" onclick="switchMyAccountTab('tests', this)"><i class="fas fa-pencil-alt"></i> Mock Tests</button>
-                    <button class="review-filter-tab" data-tab="materials" onclick="switchMyAccountTab('materials', this)"><i class="fas fa-file-pdf"></i> Study Material</button>
-                    <button class="review-filter-tab" data-tab="videos" onclick="switchMyAccountTab('videos', this)"><i class="fas fa-video"></i> Recorded Classes</button>
-                    <button class="review-filter-tab" data-tab="courses" onclick="switchMyAccountTab('courses', this)"><i class="fas fa-graduation-cap"></i> Courses</button>
-                    <button class="review-filter-tab" data-tab="results" onclick="switchMyAccountTab('results', this)"><i class="fas fa-chart-bar"></i> My Results</button>
-                </div>
-                <div class="review-filter-tabs" id="myAccountSubTabs" style="margin-top:6px;">
-                    <button class="review-filter-tab" data-subtab="free" onclick="switchMyAccountSubTab('free', this)" style="display:none;"><i class="fas fa-unlock"></i> Free</button>
-                    <button class="review-filter-tab active" data-subtab="paid" onclick="switchMyAccountSubTab('paid', this)"><i class="fas fa-lock"></i> Paid</button>
-                </div>
+                <h3 style="font-size:16px;margin:4px 0 12px;display:flex;align-items:center;gap:8px;"><i class="fas fa-chart-bar" style="color:var(--accent);"></i> My Results</h3>
                 <div id="myAccountBody"></div>
             </div>
         </div>
@@ -4727,6 +4831,7 @@
                     <button class="btn btn-success btn-sm" onclick="openImportTestModal()"><i class="fas fa-code"></i> JSON</button>
                     <button class="btn btn-accent btn-sm" onclick="openCreateFolderModal(currentTestFolderId, 'test')"><i class="fas fa-folder-plus"></i> Folder</button>
                     <button class="btn btn-outline btn-sm" onclick="cleanUpQnaPdfDrive()" title="Finds and deletes Q&A PDFs sitting in Drive that no test actually references anymore — e.g. orphaned by deleting/editing a test after its PDF was cached"><i class="fas fa-broom"></i> Clean Up PDF Drive</button>
+                    <button class="btn btn-outline btn-sm" onclick="organizeAndCleanQuestionImages()" title="Sorts every mock's question images into Question Answer Image / folder / mock / Question N and deletes images nothing uses"><i class="fas fa-images"></i> Organize Images</button>
                 </div>
             </div>
 
@@ -6864,6 +6969,7 @@
         const ALL_LOGIN_PANELS = ['studentLoginForm', 'signupStep1', 'signupStep2', 'forgotStep1', 'forgotStep2', 'forgotStep3', 'otpLoginStep1', 'otpLoginStep2'];
         function hideAllStudentPanels() {
             ALL_LOGIN_PANELS.forEach(id => { document.getElementById(id).style.display = 'none'; });
+            document.querySelector('#loginOverlay .login-box')?.classList.remove('su-mode');
         }
 
         function switchLoginRole(role) {
@@ -6881,6 +6987,7 @@
         function showStudentSignup() {
             hideAllStudentPanels();
             document.getElementById('signupStep1').style.display = 'block';
+            document.querySelector('#loginOverlay .login-box')?.classList.add('su-mode');
             document.getElementById('authModeTabSignIn')?.classList.remove('active');
             document.getElementById('authModeTabSignUp')?.classList.add('active');
         }
@@ -6892,6 +6999,7 @@
         }
         function showStudentSignupStep1() {
             stopSignupVerifyPolling();
+            suClear(false);
             document.getElementById('signupStep2').style.display = 'none';
             document.getElementById('signupStep1').style.display = 'block';
         }
@@ -7038,93 +7146,224 @@
         }
 
 
-        // Holds the email being verified across the 3 signup steps.
+        // ===== Sign-up with an emailed 6-digit code =====
         let pendingSignupEmail = '';
         let pendingSignupPassword = '';
-        let signupVerifyPollTimer = null;
+        let signupResendTimer = null;
+        let signupVerifying = false;
+
+        // Name kept: closeLoginOverlay()/showStudentSignupStep1() call it to stop timers.
+        function stopSignupVerifyPolling() {
+            if (signupResendTimer) { clearInterval(signupResendTimer); signupResendTimer = null; }
+        }
+
+        function toggleSignupPassword(btn) {
+            const inp = document.getElementById('signupPassword');
+            const show = inp.type === 'password';
+            inp.type = show ? 'text' : 'password';
+            btn.innerHTML = `<i class="fas fa-eye${show ? '-slash' : ''}"></i>`;
+        }
+
+        function setSignupBtnLoading(id, loading, html) {
+            const b = document.getElementById(id);
+            if (!b) return;
+            if (!b.dataset.orig) b.dataset.orig = b.innerHTML;
+            b.disabled = loading;
+            b.innerHTML = loading ? '<i class="fas fa-circle-notch fa-spin"></i> ' + (html || 'Please wait...') : b.dataset.orig;
+        }
+
+        function suBoxes() { return Array.from(document.querySelectorAll('#signupOtpBoxes .su-otp-box')); }
+        function suCode() { return suBoxes().map(b => b.value).join(''); }
+
+        function suFill(digits, start) {
+            const boxes = suBoxes();
+            let k = start;
+            for (const d of digits) { if (k > 5) break; boxes[k].value = d; boxes[k].classList.add('filled'); k++; }
+            boxes[Math.min(k, 5)].focus();
+            if (suCode().length === 6) verifySignupOtpEntered();
+        }
+
+        function suClear(focusFirst) {
+            const wrap = document.getElementById('signupOtpBoxes');
+            wrap.classList.remove('err', 'verifying');
+            suBoxes().forEach(b => { b.value = ''; b.classList.remove('filled', 'ok'); });
+            if (focusFirst) suBoxes()[0].focus();
+        }
+
+        function suError() {
+            const wrap = document.getElementById('signupOtpBoxes');
+            wrap.classList.remove('shake');
+            void wrap.offsetWidth; // restart the shake animation
+            wrap.classList.add('err', 'shake');
+            if (navigator.vibrate) { try { navigator.vibrate(120); } catch (_) {} }
+            setTimeout(() => suClear(true), 650);
+        }
+
+        function initSignupOtpBoxes() {
+            suBoxes().forEach((box, i, all) => {
+                if (box.dataset.wired) return;
+                box.dataset.wired = '1';
+                box.addEventListener('input', () => {
+                    const digits = box.value.replace(/\D/g, '');
+                    box.value = '';
+                    box.classList.remove('filled');
+                    if (!digits) return;
+                    suFill(digits, i); // also handles iOS/Android autofill and pasting into one box
+                });
+                box.addEventListener('keydown', e => {
+                    if (e.key === 'Backspace') {
+                        e.preventDefault();
+                        if (box.value) { box.value = ''; box.classList.remove('filled'); }
+                        else if (i > 0) { all[i - 1].value = ''; all[i - 1].classList.remove('filled'); all[i - 1].focus(); }
+                        document.getElementById('signupOtpBoxes').classList.remove('err');
+                    } else if (e.key === 'ArrowLeft' && i > 0) { e.preventDefault(); all[i - 1].focus(); }
+                    else if (e.key === 'ArrowRight' && i < 5) { e.preventDefault(); all[i + 1].focus(); }
+                    else if (e.key === 'Enter') { verifySignupOtpEntered(); }
+                });
+                box.addEventListener('paste', e => {
+                    e.preventDefault();
+                    const digits = (e.clipboardData?.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+                    if (digits) suFill(digits, 0);
+                });
+                box.addEventListener('focus', () => { box.select(); });
+            });
+        }
+
+        function startSignupResendTimer(seconds) {
+            stopSignupVerifyPolling();
+            const txt = document.getElementById('signupTimerText');
+            const link = document.getElementById('signupResendLink');
+            let left = seconds;
+            link.style.opacity = '0.45'; link.style.pointerEvents = 'none';
+            const tick = () => {
+                if (left <= 0) {
+                    stopSignupVerifyPolling();
+                    txt.textContent = 'Didn\'t get it?';
+                    link.style.opacity = '1'; link.style.pointerEvents = 'auto';
+                    return;
+                }
+                txt.innerHTML = `⏳ Resend available in <strong>0:${String(left).padStart(2, '0')}</strong>`;
+                left--;
+            };
+            tick();
+            signupResendTimer = setInterval(tick, 1000);
+        }
+
+        function showSignupOtpStep() {
+            document.getElementById('signupEmailDisplay').textContent = pendingSignupEmail;
+            document.getElementById('signupStep1').style.display = 'none';
+            document.getElementById('signupStep2').style.display = 'block';
+            document.getElementById('signupRetryBtn').style.display = 'none';
+            document.getElementById('signupVerifyBtn').style.display = '';
+            initSignupOtpBoxes();
+            suClear(false);
+            const wrap = document.getElementById('signupOtpBoxes');
+            wrap.classList.remove('su-enter');
+            void wrap.offsetWidth;
+            wrap.classList.add('su-enter'); // staggered pop-in
+            setTimeout(() => { wrap.classList.remove('su-enter'); suBoxes()[0].focus(); }, 900);
+            startSignupResendTimer(60);
+        }
 
         async function submitSignupStep1() {
             const name = document.getElementById('signupName').value.trim();
-            const email = document.getElementById('signupEmail').value.trim();
+            const email = document.getElementById('signupEmail').value.trim().toLowerCase();
             const phone = document.getElementById('signupPhone').value.trim();
             const password = document.getElementById('signupPassword').value;
             if (!name || !email || !phone || !password) {
-                showToast('Fill in your name, email, phone, and password', 'error');
+                showToast('Fill in your name, email, WhatsApp number, and password', 'error');
                 return;
             }
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
                 showToast('Enter a valid email address', 'error');
                 return;
             }
+            if (phone.replace(/\D/g, '').length < 10) {
+                showToast('Enter a valid 10-digit WhatsApp number', 'error');
+                return;
+            }
             if (password.length < 6) {
                 showToast('Password must be at least 6 characters', 'error');
                 return;
             }
-            if (!window.fetchFirebaseSignupCreate) {
-                showToast('Signup isn\'t ready yet — try again in a moment', 'error');
+            setSignupBtnLoading('signupSendBtn', true, 'Sending code...');
+            let res;
+            try {
+                res = await apiPost({ action: 'sendSignupOTP', email, phone });
+            } catch (err) {
+                setSignupBtnLoading('signupSendBtn', false);
+                showToast('Could not reach the server — check your connection and try again', 'error');
                 return;
             }
-            showToast('Creating your account...', 'info');
-            const res = await window.fetchFirebaseSignupCreate(email, password);
-            if (!res.success) { showToast(res.error || 'Could not create account', 'error'); return; }
+            setSignupBtnLoading('signupSendBtn', false);
+            if (!res.success) { showToast(res.error || 'Could not send the code', 'error'); return; }
             pendingSignupEmail = email;
             pendingSignupPassword = password;
-            document.getElementById('signupEmailDisplay').textContent = email;
-            document.getElementById('signupStep1').style.display = 'none';
-            document.getElementById('signupStep2').style.display = 'block';
-            showToast('✅ Account created — check your email for the link', 'success');
-            startSignupVerifyPolling();
+            showToast('📧 Code sent — check your inbox (and Spam folder)', 'success');
+            showSignupOtpStep();
         }
 
-        // Auto-checks every few seconds while the "waiting" screen is up,
-        // so clicking the link (on this device or any other) advances
-        // the signup without the user needing to come back and tap
-        // anything. Also cleared whenever that screen isn't showing.
-        function startSignupVerifyPolling() {
-            stopSignupVerifyPolling();
-            signupVerifyPollTimer = setInterval(() => checkSignupVerified(false), 4000);
-        }
-        function stopSignupVerifyPolling() {
-            if (signupVerifyPollTimer) { clearInterval(signupVerifyPollTimer); signupVerifyPollTimer = null; }
-        }
-
-        async function resendSignupVerification() {
-            showToast('Sending...', 'info');
-            const res = window.fetchFirebaseResendVerification ? await window.fetchFirebaseResendVerification() : { success: false };
-            showToast(res.success ? '📧 Sent again — check your inbox (and spam folder)' : 'Could not resend right now — try again shortly', res.success ? 'success' : 'error');
+        async function resendSignupOtp() {
+            if (!pendingSignupEmail) return;
+            const phone = document.getElementById('signupPhone').value.trim();
+            showToast('Sending a new code...', 'info');
+            let res;
+            try { res = await apiPost({ action: 'sendSignupOTP', email: pendingSignupEmail, phone }); }
+            catch (_) { res = { success: false, error: 'Could not reach the server' }; }
+            if (!res.success) { showToast(res.error || 'Could not resend right now', 'error'); return; }
+            showToast('📧 New code sent', 'success');
+            suClear(true);
+            startSignupResendTimer(60);
         }
 
-        // manual=true when the person tapped "I've clicked the link"
-        // themselves (shows feedback either way); manual=false when this
-        // is a silent background poll (only acts on success, stays quiet
-        // on a not-yet-verified result so it doesn't nag every 4 seconds).
-        async function checkSignupVerified(manual) {
-            if (!window.fetchFirebaseCheckVerified) return;
-            const verified = await window.fetchFirebaseCheckVerified();
-            if (!verified) {
-                if (manual) showToast('Not verified yet — open the link from the email first', 'info');
-                return;
-            }
-            stopSignupVerifyPolling();
+        async function verifySignupOtpEntered() {
+            if (signupVerifying) return;
+            const code = suCode();
+            if (code.length < 6) { showToast('Enter all 6 digits', 'error'); suError(); return; }
+            signupVerifying = true;
+            const wrap = document.getElementById('signupOtpBoxes');
+            wrap.classList.add('verifying');
+            setSignupBtnLoading('signupVerifyBtn', true, 'Verifying...');
+            let res;
+            try { res = await apiPost({ action: 'verifySignupOTP', email: pendingSignupEmail, otp: code }); }
+            catch (_) { res = { success: false, error: 'Could not reach the server — try again' }; }
+            signupVerifying = false;
+            setSignupBtnLoading('signupVerifyBtn', false);
+            wrap.classList.remove('verifying');
+            if (!res.success) { showToast(res.error || 'Incorrect code', 'error'); suError(); return; }
+            // Success wave across the boxes, then finish.
+            suBoxes().forEach((b, k) => setTimeout(() => b.classList.add('ok'), k * 70));
+            await new Promise(r => setTimeout(r, 650));
+            finishSignupAfterOtp();
+        }
+
+        // Runs after the code is verified. Safe to run again (the "Finish
+        // setting up" button) if the network drops partway through.
+        async function finishSignupAfterOtp() {
+            const retryBtn = document.getElementById('signupRetryBtn');
+            const verifyBtn = document.getElementById('signupVerifyBtn');
+            verifyBtn.style.display = 'none';
+            retryBtn.style.display = 'none';
+            showToast('Verified! Setting up your account...', 'info');
             const name = document.getElementById('signupName').value.trim();
             const phone = document.getElementById('signupPhone').value.trim();
-            showToast('Verified! Finishing setup...', 'info');
+            const fail = (msg) => { showToast(msg, 'error'); retryBtn.style.display = ''; };
+
+            if (!window.fetchFirebaseSignupCreateVerified) { fail('Signup isn\'t ready yet — tap "Finish setting up" in a moment'); return; }
+            const fb = await window.fetchFirebaseSignupCreateVerified(pendingSignupEmail, pendingSignupPassword);
+            if (!fb.success) { fail(fb.error || 'Could not create your login'); return; }
+
             let res;
             try {
                 res = await apiPost({ action: 'completeSignupFirebase', name, email: pendingSignupEmail, phone });
             } catch (err) {
-                showToast('Verified, but couldn\'t reach the server to finish setup — try "Continue" again', 'error');
-                startSignupVerifyPolling();
+                fail('Verified, but couldn\'t reach the server to finish setup — tap "Finish setting up"');
                 return;
             }
             if (!res.success) {
-                // Most likely this student record already exists (e.g.
-                // they hit Continue twice) — treat that as success rather
-                // than blocking a verified account from proceeding.
-                if (!/already exists/i.test(res.error || '')) {
-                    showToast(res.error || 'Could not finish setting up your account', 'error');
-                    return;
-                }
+                // An existing record for THIS email just means a repeated tap — carry on.
+                // (A duplicate phone number is a real problem and is shown as such.)
+                if (!/email already exists/i.test(res.error || '')) { fail(res.error || 'Could not finish setting up your account'); return; }
             }
             studentCreds = { identifier: pendingSignupEmail, password: pendingSignupPassword };
             currentUser = { name: res.name || name, role: 'student', email: pendingSignupEmail };
@@ -7537,6 +7776,7 @@
                             ${isAdmin ? '' : (student ? `${escapeHtml(student.email || '')}${student.phone ? ' · ' + escapeHtml(student.phone) : ''}` : '')}
                         </div>
                         <span class="myaccount-role-badge"><i class="fas fa-${isAdmin ? 'crown' : 'user-graduate'}"></i> ${isAdmin ? 'Administrator' : 'Student'}</span>
+                        ${isAdmin ? '' : `<div style="margin-top:10px;"><button class="btn btn-outline btn-sm" onclick="openAccountSettings()"><i class="fas fa-cog"></i> Settings</button></div>`}
                     </div>
                 </div>
             `;
@@ -7553,13 +7793,9 @@
             document.getElementById('myAccountContentWrap').style.display = isAdmin ? 'none' : 'block';
 
             if (!isAdmin) {
-                myAccountTab = 'tests';
-                myAccountSubTab = 'paid';
-                document.querySelectorAll('#myAccountOverlay .review-filter-tab').forEach(b => b.classList.remove('active'));
-                document.querySelector('#myAccountOverlay .review-filter-tab[data-tab="tests"]').classList.add('active');
-                document.querySelector('#myAccountOverlay .review-filter-tab[data-subtab="paid"]').classList.add('active');
-                document.getElementById('myAccountSubTabs').style.display = 'flex';
-                renderMyAccountContent();
+                // Students only get their results here (grouped by folder)
+                // plus Settings — the content tabs were removed.
+                renderMyAccountResults();
             }
         }
 
@@ -7567,6 +7803,20 @@
             document.getElementById('myAccountOverlay').classList.remove('open');
             if (window.history.state && window.history.state.myAccount) { pendingOverlayClose = true; window.history.back(); }
         }
+
+        // Collapsible folder groups in My Results
+        (function () {
+            const st = document.createElement('style');
+            st.textContent = `
+                .acct-group { margin-bottom: 12px; border: 1px solid var(--glass-border); border-radius: 16px; background: var(--glass-bg); overflow: hidden; }
+                .acct-group > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; font-weight: 700; font-size: 15px; }
+                .acct-group > summary::-webkit-details-marker { display: none; }
+                .acct-group > summary i { color: var(--accent); margin-right: 8px; }
+                .acct-group[open] > summary { border-bottom: 1px solid var(--glass-border); }
+                .acct-count { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 20px; background: rgba(245,158,11,0.15); color: var(--accent); }
+                .acct-group > .result-card { margin: 10px; }`;
+            document.head.appendChild(st);
+        })();
 
         let myAccountTab = 'tests';
         let myAccountSubTab = 'free';
@@ -7705,6 +7955,8 @@
             }).join('')}</div>`;
         }
 
+        // Results grouped by the top-level folder of each test (GK, Reasoning,
+        // Maths, English...), each group collapsible, newest attempt first.
         function renderMyAccountResults() {
             const store = getStore();
             const results = store.results.filter(r => r.studentName === currentUser.name)
@@ -7714,22 +7966,77 @@
                 body.innerHTML = `<div class="empty-state"><i class="fas fa-chart-bar"></i><h4>No attempts yet</h4><p>Take a mock test to see your results here</p></div>`;
                 return;
             }
-            body.innerHTML = results.map(r => {
+            const groups = new Map();
+            results.forEach(r => {
                 const test = store.tests.find(t => t.id === r.testId);
-                return `
-                    <div class="result-card">
-                        <div class="result-card-info">
-                            <div class="result-card-name">${escapeHtml(r.testTitle || (test ? test.title : 'Test'))}</div>
-                            <div class="result-card-meta"><span><i class="fas fa-calendar"></i> ${formatResultDateTime(r.date)}</span></div>
-                        </div>
-                        <div class="result-card-score">${r.score}/${r.total}<span style="font-size:11px;color:var(--text-secondary);font-weight:600;"> (${r.percentage}%)</span></div>
-                        <div class="result-card-actions" style="display:flex;gap:6px;">
-                            <button class="btn btn-accent btn-sm" onclick="reviewPastResult('${r.id}', '${r.testId}')"><i class="fas fa-eye"></i> Review</button>
-                            <button class="btn btn-outline btn-sm" onclick="showAnswerKey('${r.testId}')"><i class="fas fa-key"></i> Key</button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
+                const path = test ? getFolderPath(test.folderId) : [];
+                const top = path.length ? ((path[0].name || '').trim() || 'Other') : 'Other';
+                const sub = path.slice(1).map(f => (f.name || '').trim()).filter(Boolean).join(' › ');
+                if (!groups.has(top)) groups.set(top, []);
+                groups.get(top).push({ r, test, sub });
+            });
+            const preferred = ['gk', 'reasoning', 'math', 'maths', 'mathematics', 'english'];
+            const rank = name => { const i = preferred.indexOf(name.toLowerCase()); return name === 'Other' ? 999 : (i === -1 ? 100 : i); };
+            const names = [...groups.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+            body.innerHTML = names.map((name, gi) => `
+                <details class="acct-group" ${gi === 0 ? 'open' : ''}>
+                    <summary><span><i class="fas fa-folder-open"></i> ${escapeHtml(name)}</span><span class="acct-count">${groups.get(name).length}</span></summary>
+                    ${groups.get(name).map(({ r, test, sub }) => `
+                        <div class="result-card">
+                            <div class="result-card-info">
+                                <div class="result-card-name">${escapeHtml(r.testTitle || (test ? test.title : 'Test'))}</div>
+                                ${sub ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">${escapeHtml(sub)}</div>` : ''}
+                                <div class="result-card-meta"><span><i class="fas fa-calendar"></i> ${formatResultDateTime(r.date)}</span></div>
+                            </div>
+                            <div class="result-card-score">${r.score}/${r.total}<span style="font-size:11px;color:var(--text-secondary);font-weight:600;"> (${r.percentage}%)</span></div>
+                            <div class="result-card-actions" style="display:flex;gap:6px;">
+                                <button class="btn btn-accent btn-sm" onclick="reviewPastResult('${r.id}', '${r.testId}')"><i class="fas fa-eye"></i> Review</button>
+                                <button class="btn btn-outline btn-sm" onclick="showAnswerKey('${r.testId}')"><i class="fas fa-key"></i> Key</button>
+                            </div>
+                        </div>`).join('')}
+                </details>`).join('');
+        }
+
+        // ---------------- Settings: change password / email ----------------
+        function openAccountSettings() {
+            if (!currentUser || currentUser.role === 'admin') return;
+            const field = (id, label, type, ph) => `<label style="display:block;font-size:12px;font-weight:600;margin:10px 0 4px;">${label}</label>
+                <input id="${id}" type="${type}" placeholder="${ph || ''}" autocomplete="off" style="width:100%;padding:12px;border-radius:12px;border:1px solid var(--glass-border);background:var(--glass-bg);color:var(--text-primary);font-size:15px;box-sizing:border-box;">`;
+            openModal(`
+                <div class="modal-header"><h3><i class="fas fa-cog"></i> Settings</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+                <div style="font-weight:700;margin-bottom:2px;"><i class="fas fa-key" style="color:var(--accent);"></i> Change password</div>
+                ${field('setOldPw', 'Current password', 'password')}
+                ${field('setNewPw', 'New password (min 4 characters)', 'password')}
+                ${field('setNewPw2', 'Confirm new password', 'password')}
+                <button class="btn btn-primary btn-block" style="margin-top:12px;" id="setPwBtn" onclick="submitChangePassword()">Update password</button>
+                `);
+        }
+
+        async function submitChangePassword() {
+            const oldPw = document.getElementById('setOldPw').value;
+            const newPw = document.getElementById('setNewPw').value;
+            const newPw2 = document.getElementById('setNewPw2').value;
+            if (!oldPw || !newPw) { showToast('Fill in your current and new password', 'error'); return; }
+            if (newPw.length < 4) { showToast('New password must be at least 4 characters', 'error'); return; }
+            if (newPw !== newPw2) { showToast("The two new passwords don't match", 'error'); return; }
+            if (newPw === oldPw) { showToast('New password must be different', 'error'); return; }
+            const btn = document.getElementById('setPwBtn');
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+            try {
+                const res = await apiPost({ action: 'changeStudentPassword', identifier: studentCreds.identifier, password: oldPw, newPassword: newPw }, 30000);
+                if (!res.success) { showToast(res.error || 'Could not change password', 'error'); return; }
+                // Keep Firebase Auth in step so the OLD password stops working there too.
+                try { if (window.changeFirebasePassword && currentUser.email) await window.changeFirebasePassword(currentUser.email, oldPw, newPw); }
+                catch (err) { console.warn('Firebase password update skipped:', err); }
+                studentCreds.password = newPw;
+                try { localStorage.setItem('dekaStudentSession', JSON.stringify(studentCreds)); } catch (_) {}
+                closeModal();
+                showToast('✅ Password updated', 'success');
+            } catch (err) {
+                showToast('Cannot reach server — check your internet connection', 'error');
+            } finally {
+                const b = document.getElementById('setPwBtn'); if (b) { b.disabled = false; b.textContent = 'Update password'; }
+            }
         }
 
         // ================================================================
@@ -9285,7 +9592,7 @@
                             <button class="btn btn-outline btn-sm" onclick="moveTest('${t.id}')"><i class="fas fa-folder-open"></i> Move</button>
                             <button class="btn ${t.qnaButtonHidden ? 'btn-outline' : 'btn-success'} btn-sm" onclick="toggleTestQnaButton('${t.id}')" title="${t.qnaButtonHidden ? 'Show the Start Q&A button to students' : 'Hide the Start Q&A button from students'}"><i class="fas fa-${t.qnaButtonHidden ? 'eye-slash' : 'eye'}"></i> Q&amp;A Btn</button>
                             <button class="btn ${t.guestAllowed ? 'btn-success' : 'btn-outline'} btn-sm" onclick="toggleTestGuestAccess('${t.id}')" title="${t.guestAllowed ? 'This mock is open to visitors with no account \u2014 tap to require sign-in again' : 'Let visitors with no account try this mock (Start Mock / Q&A / PDF), free'}"><i class="fas fa-${t.guestAllowed ? 'unlock' : 'user-slash'}"></i> Guest Access</button>
-                            <button class="btn ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'btn-success' : 'btn-outline'} btn-sm" onclick="confirmRegenerateTestQnaPdfs('${t.id}')" title="${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'This mock has cached PDFs that auto-refresh on every edit \u2014 tap to force-regenerate now' : 'Generates and caches every PDF version of this mock so students get an instant download \u2014 keeps itself up to date automatically after this'}"><i class="fas fa-cloud-upload-alt"></i> ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'PDF Cached' : 'Upload PDF'}</button>
+                            <button class="btn ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'btn-success' : 'btn-outline'} btn-sm" onclick="confirmRegenerateTestQnaPdfs('${t.id}')" title="${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'This mock has cached PDFs \u2014 saving edits does not refresh them; tap to regenerate now' : 'Generates and caches every PDF version of this mock so students get an instant download \u2014 use Update PDF inside Edit after future changes'}"><i class="fas fa-cloud-upload-alt"></i> ${(t.qnaPdfDrive && Object.keys(t.qnaPdfDrive).length) ? 'PDF Cached' : 'Upload PDF'}</button>
                             <button class="btn btn-outline btn-sm" onclick="openTestInFirestore('${t.id}')" title="Open this test's document directly in the Firebase console"><i class="fas fa-fire"></i> Firestore</button>
                             <button class="btn ${t.pdfDownloadVisible ? 'btn-success' : 'btn-outline'} btn-sm" onclick="openPdfBtnSettings('${t.id}')" title="${t.pdfDownloadVisible ? 'Hide the Download PDF button from students' : 'Show the Download PDF button to students'}"><i class="fas fa-${t.pdfDownloadVisible ? 'eye' : 'eye-slash'}"></i> PDF Btn</button>
                             <button class="btn ${t.pdfLocked ? 'btn-danger' : 'btn-outline'} btn-sm" onclick="toggleTestPdfLock('${t.id}')" title="${t.pdfLocked ? 'PDF download locked — ₹' + (t.pdfPrice || 0) + ' (tap to unlock)' : 'PDF download is free (tap to lock + set a price)'}"><i class="fas fa-${t.pdfLocked ? 'lock' : 'lock-open'}"></i> PDF Lock</button>
@@ -9944,6 +10251,7 @@
                 const t = store.tests.find(t => t.id === testId);
                 if (t) { t.folderId = folderId;
                     saveStore(store);
+                    organizeTestImagesInDrive(t);
                     closeModal();
                     renderAllFolders();
                     showToast(`Test moved to "${getFolderById(folderId)?.name || 'Root'}"`, 'success'); }
@@ -10001,6 +10309,7 @@
                 <div style="display:flex;gap:8px;margin-top:12px;">
                     <button type="button" class="btn btn-outline btn-block" onclick="openEditTestModal('${testId}')"><i class="fas fa-arrow-left"></i> Back to form editor</button>
                     <button type="button" class="btn btn-primary btn-block" onclick="saveEditTestJson('${testId}')"><i class="fas fa-save"></i> Save</button>
+                    <button type="button" class="btn btn-accent btn-block" onclick="updateTestPdfInBackground('${testId}')"><i class="fas fa-cloud-upload-alt"></i> Update PDF</button>
                 </div>
             `;
             openModal(modalHtml);
@@ -10031,12 +10340,10 @@
                 hint_en: q.hint_en || '', hint_as: q.hint_as || ''
             }));
             saveStore(store);
-            // Fire-and-forget: a cached PDF for this test (see "Upload
-            // PDF") rebuilds itself from the just-edited questions right
-            // now, rather than quietly keep serving the pre-edit content
-            // to anyone who downloads it. Does nothing if this test's
-            // PDF was never generated in the first place.
-            maybeAutoRegenerateQnaPdfs(test);
+            // Saving never touches the cached PDFs anymore — the admin
+            // refreshes them on purpose with the "Update PDF" button
+            // (see updateTestPdfInBackground).
+            organizeTestImagesInDrive(test);
             // Stay right here in the JSON editor after saving instead of
             // closing the modal — closing used to bounce the admin back
             // out to wherever the test list happened to be, which meant
@@ -10257,7 +10564,10 @@
                     <h3><i class="fas fa-edit"></i> Edit Test: ${escapeHtml(test.title)}</h3>
                     <button class="modal-close" onclick="closeModal()">&times;</button>
                 </div>
-                <button type="button" class="btn btn-outline btn-sm" style="margin-bottom:12px;" onclick="openEditTestAsJson('${testId}')"><i class="fas fa-code"></i> Edit as JSON instead</button>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="openEditTestAsJson('${testId}')"><i class="fas fa-code"></i> Edit as JSON instead</button>
+                    <button type="button" class="btn btn-accent btn-sm" onclick="updateTestPdfInBackground('${testId}')"><i class="fas fa-cloud-upload-alt"></i> Update PDF</button>
+                </div>
                 <form id="editTestForm">
                     <div class="form-row">
                         <div class="form-group"><label>Test Title <span class="required">*</span></label><input type="text" id="editTestTitle" value="${escapeHtml(test.title)}" required /></div>
@@ -10298,7 +10608,9 @@
                 modalEl.style.paddingBottom = 'calc(70px + var(--safe-bottom))';
                 const footer = document.createElement('div');
                 footer.className = 'edit-test-sticky-footer';
-                footer.innerHTML = `<button type="button" class="btn btn-primary btn-block" onclick="saveTestFromInline()"><i class="fas fa-save"></i> Save Changes</button>`;
+                footer.style.display = 'flex';
+                footer.style.gap = '8px';
+                footer.innerHTML = `<button type="button" class="btn btn-primary btn-block" onclick="saveTestFromInline()"><i class="fas fa-save"></i> Save Changes</button><button type="button" class="btn btn-accent btn-block" onclick="updateTestPdfInBackground('${testId}')"><i class="fas fa-cloud-upload-alt"></i> Update PDF</button>`;
                 modalEl.appendChild(footer);
             }
 
@@ -10518,15 +10830,10 @@
                 test.questions = questions;
 
                 saveStore(store);
-                // Fire-and-forget: a cached PDF for this test (see
-                // "Upload PDF") rebuilds itself from the just-edited
-                // questions/title/folder right now, rather than quietly
-                // keep serving pre-edit content — including a title or
-                // folder change, which affects the cached PDF's filename
-                // and Drive location, not just its content. Does nothing
-                // if this test's PDF was never generated in the first
-                // place.
-                maybeAutoRegenerateQnaPdfs(test);
+                // Saving never touches the cached PDFs anymore — the admin
+                // refreshes them on purpose with the "Update PDF" button
+                // (see updateTestPdfInBackground).
+                organizeTestImagesInDrive(test);
                 const keepOpen = window._keepEditModalOpenOnSave;
                 window._keepEditModalOpenOnSave = false;
                 if (keepOpen) {
@@ -10715,6 +11022,7 @@
             store.tests.push({ id: generateId(), title, subject, duration, folderId: finalFolderId, questions, createdAt: new Date()
                     .toISOString(), published: publishNow, locked, price, courseIds, hideFromLibrary, courseFolderMap, thumbnailFileId });
             saveStore(store);
+            organizeTestImagesInDrive(store.tests[store.tests.length - 1]);
             document.getElementById('createTestForm').reset();
             document.getElementById('testPriceGroup').style.display = 'none';
             buildQuestionInputs();
@@ -13596,12 +13904,23 @@
         // ================================================================
         // Safer than inlining full JSON into onclick= — just looks the
         // record up fresh from the store by id.
-        function reviewPastResult(resultId, testId) {
+        // WHY OLD REVIEWS FAILED: a test's questions are loaded lazily, so for
+        // an attempt from an earlier session the store held NO questions (and
+        // no answer key) for that test — the review then crashed and showed
+        // "Could not open the review". It now loads both first.
+        async function reviewPastResult(resultId, testId) {
             try {
                 const store = getStore();
                 const result = store.results.find(r => r.id === resultId);
                 const test = store.tests.find(t => t.id === testId);
-                if (!result || !test) { showToast('Could not find that attempt', 'error'); return; }
+                if (!result) { showToast('Could not find that attempt', 'error'); return; }
+                if (!test) { showToast('This mock is no longer available', 'error'); return; }
+                if (!test.questions || !test.questions.length) {
+                    showToast('Opening review...', 'info');
+                    await ensureTestQuestionsLoaded(test);
+                }
+                try { await ensureAnswerKeyLoaded(test); } catch (_) {}
+                if (!test.questions || !test.questions.length) { showToast('The questions for this mock could not be loaded — please try again', 'error'); return; }
                 // If this was opened from within the Results overlay (or the
                 // older modal-based flow), close that cleanly first and have
                 // the review REPLACE its history entry instead of stacking on
@@ -15259,7 +15578,7 @@
             reader.onload = async function(ev) {
                 showToast('Uploading image...', 'info');
                 try {
-                    const driveRef = await uploadFileToDrive(ev.target.result, file.name, file.type || 'image/jpeg', 'questionImage');
+                    const driveRef = await uploadFileToDrive(ev.target.result, file.name, file.type || 'image/jpeg', 'questionImage', undefined, ['Q&A Material']);
                     row.image = driveRef;
                     renderQnaBuilderRows();
                     showToast('Image added', 'success');
@@ -16018,6 +16337,7 @@
         // so it went unnoticed. This never stacks: same element, just a
         // new text each time.
         function showPdfProgress(text) {
+            if (qnaPdfBackgroundMode) return;
             let el = document.getElementById('qnaPdfProgressBadge');
             if (!el) {
                 el = document.createElement('div');
@@ -16038,6 +16358,14 @@
         function hidePdfProgress() {
             document.getElementById('qnaPdfProgressBadge')?.remove();
             if (!document.getElementById('bulkPdfPanel')) document.body.classList.remove('pdf-busy');
+        }
+
+        function offerBlobPdf(blob, name) {
+            const url = URL.createObjectURL(blob);
+            openModal(`
+                <div class="modal-header"><h3><i class="fas fa-file-pdf"></i> Your PDF is ready</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+                <p style="font-size:13px;color:var(--text-secondary);margin:4px 0 14px;">Tap the button to open it. You can save it from there.</p>
+                <a class="btn btn-primary btn-block" href="${url}" target="_blank" rel="noopener" download="${escapeHtml(name)}.pdf"><i class="fas fa-download"></i> Open PDF</a>`);
         }
 
         function qnaPdfNameFor(title, opts) {
@@ -16560,7 +16888,10 @@
             let cacheWriteOk = false, savedFileId = null;
             const isAdminUser = currentUser && currentUser.role === 'admin';
             const isStudentUser = currentUser && currentUser.role !== 'admin' && studentCreds && studentCreds.identifier;
-            if (cacheKey && (isAdminUser || isStudentUser)) {
+            // A guest can save too, but only for a mock admin has opened to
+            // guests (the server re-checks that).
+            const isGuestUser = !currentUser && !!(source.data && source.data.guestAllowed);
+            if (cacheKey && (isAdminUser || isStudentUser || isGuestUser)) {
                 try {
                     if (deliverLocally) showPdfProgress('Saving a copy...');
                     const base64 = await blobToBase64(blob);
@@ -16571,8 +16902,8 @@
                     } else {
                         const res = await apiPost({
                             action: 'saveStudentQnaPdf',
-                            identifier: studentCreds.identifier,
-                            password: studentCreds.password,
+                            identifier: isGuestUser ? '' : studentCreds.identifier,
+                            password: isGuestUser ? '' : studentCreds.password,
                             testId: source.data.id,
                             cacheKey: cacheKey,
                             fileBase64: base64.split(',')[1] || base64,
@@ -16630,7 +16961,10 @@
                         showToast('Could not download the PDF — please try again', 'error');
                     }
                 } else {
-                    showToast('Could not save this PDF right now — please try again in a moment', 'error');
+                    // iPhones can't save a blob straight to Files, and this copy
+                    // could not be stored on Drive. Don't fail — hand the file
+                    // over with a button (a real tap is what iOS needs to open it).
+                    offerBlobPdf(blob, safeName);
                 }
             }
             hidePdfProgress();
@@ -16656,9 +16990,14 @@
         // instead means the admin decides which mocks are worth having a
         // cached PDF at all, and editing a test that already has one
         // triggers a fresh regeneration automatically (see
-        // maybeAutoRegenerateQnaPdfs, called after a test save) instead
+        // updateTestPdfInBackground, run from the Update PDF button) instead
         // of silently serving the old content forever.
         let bulkPdfCancelRequested = false;
+        // True while a regeneration started from an "Update PDF" button is
+        // running: it works silently in the background — no progress
+        // panel, no per-page badge — so the admin can keep editing.
+        let qnaPdfBackgroundMode = false;
+        let qnaPdfRegenBusy = false;
 
         // The versions students can ask for, from the PDF Btn dialog: each
         // enabled language, in "All options" (or "All options + Answer sheet"),
@@ -16705,6 +17044,7 @@
             if (t) t.textContent = 'Stopping...';
         }
         function updateBulkPdfPanel(title, sub, pct) {
+            if (qnaPdfBackgroundMode) return;
             showBulkPdfPanel();
             const t = document.getElementById('bulkPdfPanelTitle');
             const s = document.getElementById('bulkPdfPanelSub');
@@ -16734,20 +17074,44 @@
             const hasExisting = test.qnaPdfDrive && Object.keys(test.qnaPdfDrive).length > 0;
             const msg = hasExisting
                 ? `Re-generate the English and Assamese PDFs of "${test.title}"? The ${Object.keys(test.qnaPdfDrive).length} already-cached version(s) will be deleted from Drive and replaced with fresh ones built from the test's current questions.`
-                : `Generate and cache the student PDFs (as set in the PDF Btn options) of "${test.title}" — the languages and options you ticked, including the hint versions?\n\nOnce this test has a cached PDF, editing and saving it will automatically regenerate these — you won't need to press this again after every edit.`;
+                : `Generate and cache the student PDFs (as set in the PDF Btn options) of "${test.title}" — the languages and options you ticked, including the hint versions?\n\nSaving edits to a mock never regenerates the PDFs by itself — after editing, press Update PDF (inside Edit) or this button again.`;
             if (!confirm(msg)) return;
             regenerateTestQnaPdfs(testId, { manual: true });
         }
 
         // The one function behind both the per-test "Upload PDF" button
         // (manual: true) and the automatic re-run after a test edit is
-        // saved (manual: false, via maybeAutoRegenerateQnaPdfs) — always
+        // saved (manual: false, background: true, via updateTestPdfInBackground) — always
         // starts from a clean slate: delete whatever's already cached for
         // THIS test, then generate every combination fresh. That's what
         // makes "I edited a question" and "a student downloads the PDF"
         // never disagree with each other — there is no in-between state
         // where some cached copies reflect the edit and others don't.
-        async function regenerateTestQnaPdfs(testId, { manual = true } = {}) {
+        async function regenerateTestQnaPdfs(testId, opts = {}) {
+            if (qnaPdfRegenBusy) { showToast('A PDF update is already running — please wait for it to finish', 'info'); return; }
+            qnaPdfRegenBusy = true;
+            qnaPdfBackgroundMode = !!opts.background;
+            try {
+                await regenerateTestQnaPdfsInner(testId, opts);
+            } finally {
+                qnaPdfRegenBusy = false;
+                qnaPdfBackgroundMode = false;
+            }
+        }
+
+        // "Update PDF" button inside the edit screens. Shows one short
+        // notification (it hides itself), then rebuilds the cached PDFs
+        // in the background from the LAST SAVED version of the mock.
+        function updateTestPdfInBackground(testId) {
+            if (!currentUser || currentUser.role !== 'admin') return;
+            const test = getStore().tests.find(t => t.id === testId);
+            if (!test) { showToast('Test not found', 'error'); return; }
+            if (qnaPdfRegenBusy) { showToast('A PDF update is already running — please wait for it to finish', 'info'); return; }
+            showToast(`📄 PDF update started for "${test.title}" — it runs in the background (uses the last saved version)`, 'info');
+            regenerateTestQnaPdfs(testId, { manual: false, background: true });
+        }
+
+        async function regenerateTestQnaPdfsInner(testId, { manual = true } = {}) {
             if (!currentUser || currentUser.role !== 'admin') return;
             const store = getStore();
             const test = store.tests.find(t => t.id === testId);
@@ -16837,18 +17201,6 @@
             showToast(`✅ "${test.title}" PDFs updated${cancelledNote}: ${generated} generated, ${failed} failed`, failed ? 'error' : 'success');
         }
 
-        // Called right after a test save (both the form editor and the
-        // "Edit as JSON" bulk editor — see their submit handlers) — fire-
-        // and-forget on purpose so saving itself never has to wait on a
-        // PDF regeneration. Does nothing for a test that's never had its
-        // PDF generated at all; only tests the admin has explicitly
-        // opted into (via "Upload PDF") get kept in sync automatically.
-        function maybeAutoRegenerateQnaPdfs(test) {
-            if (test && test.qnaPdfDrive && Object.keys(test.qnaPdfDrive).length > 0) {
-                regenerateTestQnaPdfs(test.id, { manual: false });
-            }
-        }
-
         // Finds Q&A PDFs physically sitting in Drive that no test's own
         // qnaPdfDrive map references anymore, and deletes them. These can
         // only really pile up from regenerateTestQnaPdfs's own delete step
@@ -16856,6 +17208,70 @@
         // being deleted outright after its PDF was cached; normal editing
         // and regeneration otherwise keeps Drive and each test's own
         // cache record in sync automatically.
+        // Moves/renames one mock's question images in Drive to
+        // "Question Answer Image/<folder path>/<mock title>/Question N"
+        // and trashes the ones it no longer uses. Fire-and-forget after a
+        // save — a failure only means the images stay where they are until
+        // the next save or the "Organize & Clean Images" tool.
+        function organizeTestImagesInDrive(test) {
+            try {
+                if (!currentUser || currentUser.role !== 'admin' || !test) return;
+                const qs = test.questions || [];
+                if (!qs.length) return;
+                // Partially loaded test -> the keep-list would be incomplete.
+                if (test.questionCount && qs.length < test.questionCount) return;
+                const items = [];
+                qs.forEach((q, i) => {
+                    const m = String(q.image || '').match(/[-\w]{25,}/g);
+                    if (m) items.push({ fileId: m[m.length - 1], qNo: i + 1 });
+                });
+                apiPost({
+                    action: 'organizeTestImages', email: adminCreds.email, password: adminCreds.password,
+                    testId: test.id, testTitle: test.title || 'Mock Test',
+                    folderPath: qnaPdfFolderPathNames(test), items
+                }, 60000).catch(err => console.error('Could not organize question images', err));
+            } catch (err) { console.error('organizeTestImagesInDrive', err); }
+        }
+
+        // One tool for both jobs: (1) organize every mock's existing images
+        // into the new folder layout, (2) trash images nothing uses.
+        async function organizeAndCleanQuestionImages() {
+            if (!currentUser || currentUser.role !== 'admin') return;
+            if (!confirm('Organize & Clean Images\n\n1) Moves every mock\'s question images into "Question Answer Image / <folder> / <mock> / Question N".\n2) Then finds images that no mock or material uses anymore and asks before trashing them (they go to Drive\'s Trash).\n\nThis can take a few minutes. Continue?')) return;
+            bulkPdfCancelRequested = false;
+            try {
+                let startIndex = 0, total = 0, organized = 0;
+                for (;;) {
+                    if (bulkPdfCancelRequested) { closeBulkPdfPanel(); showToast('Stopped', 'info'); return; }
+                    updateBulkPdfPanel('Organizing images...', total ? `Mock ${Math.min(startIndex, total)} of ${total}` : 'Starting...', total ? (startIndex / total) * 100 : 2);
+                    const r = await apiPost({ action: 'organizeAllQuestionImages', email: adminCreds.email, password: adminCreds.password, startIndex }, 300000);
+                    if (!r.success) throw new Error(r.error || 'Organizing failed');
+                    total = r.total; organized += r.organized; startIndex = r.nextIndex;
+                    if (r.done) break;
+                }
+                updateBulkPdfPanel('Looking for unused images...', 'Checking every mock and material', 100);
+                const dry = await apiPost({ action: 'cleanUpQuestionImages', email: adminCreds.email, password: adminCreds.password, dryRun: true }, 300000);
+                closeBulkPdfPanel();
+                if (!dry.success) throw new Error(dry.error || 'Check failed');
+                if (!dry.count) { showToast(`✅ ${organized} mock(s) organized. No unused images found.`, 'success'); return; }
+                const mb = (dry.bytes / (1024 * 1024)).toFixed(1);
+                if (!confirm(`${organized} mock(s) organized.\n\nFound ${dry.count} unused image(s) (~${mb} MB)${dry.partial ? ' so far (list was cut short — run again after)' : ''} that no mock or material uses. Images uploaded in the last 24 hours are never touched.\n\nMove them to Drive's Trash?`)) {
+                    showToast(`✅ ${organized} mock(s) organized. Unused images left alone.`, 'success');
+                    return;
+                }
+                showToast('Deleting unused images...', 'info');
+                for (let pass = 0; pass < 5; pass++) {
+                    const r = await apiPost({ action: 'cleanUpQuestionImages', email: adminCreds.email, password: adminCreds.password, dryRun: false }, 300000);
+                    if (!r.success) throw new Error(r.error || 'Cleanup failed');
+                    if (!r.partial) break;
+                }
+                showToast(`✅ ${organized} mock(s) organized, ${dry.count} unused image(s) moved to Trash`, 'success');
+            } catch (err) {
+                closeBulkPdfPanel();
+                showToast('Image tool stopped: ' + (err.message || err), 'error');
+            }
+        }
+
         async function cleanUpQnaPdfDrive() {
             if (!currentUser || currentUser.role !== 'admin') return;
             showToast('Checking Drive for orphaned PDFs...', 'info');
