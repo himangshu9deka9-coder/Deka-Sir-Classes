@@ -4196,6 +4196,15 @@
         @media (min-width: 600px) { .header { --hdr-circle: 84px; column-gap: 12px; } .header .header-row-bottom { gap: 12px; } }
         @media (min-width: 900px) { .header { --hdr-circle: 96px; } }
 
+        /* ===== PDF progress panel: shows once, then slides off to the right (a thin tab stays; tap it to peek) ===== */
+        #bulkPdfPanel { transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s; cursor: default; }
+        #bulkPdfPanel .bp-body { transition: opacity 0.25s; }
+        #bulkPdfPanel .bp-tab { position: absolute; left: 0; top: 0; bottom: 0; width: 26px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--accent, #f59e0b); opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+        #bulkPdfPanel.collapsed { transform: translateX(calc(100% - 26px)); cursor: pointer; }
+        #bulkPdfPanel.collapsed .bp-body { opacity: 0; pointer-events: none; }
+        #bulkPdfPanel.collapsed .bp-tab { opacity: 1; }
+        @media (prefers-reduced-motion: reduce) { #bulkPdfPanel, #bulkPdfPanel .bp-body, #bulkPdfPanel .bp-tab { transition: none; } }
+
         /* ===== Install App card + help sheet ===== */
         .install-card { display: none; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border-radius: 18px; cursor: pointer; position: relative;
             border: 1px solid transparent;
@@ -17214,6 +17223,8 @@
             el.id = 'bulkPdfPanel';
             el.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:12px;z-index:10002;background:rgba(22,24,34,0.95);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:9px 12px;box-shadow:0 14px 40px rgba(0,0,0,0.4);color:#fff;font-size:12px;width:min(290px,calc(100vw - 24px));display:flex;flex-direction:column;gap:6px;';
             el.innerHTML = `
+                <div class="bp-tab"><i class="fas fa-circle-notch fa-spin"></i></div>
+                <div class="bp-body">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
                     <strong id="bulkPdfPanelTitle" style="font-weight:700;font-size:12px;">Generating PDFs...</strong>
                     <button type="button" id="bulkPdfStopBtn" onclick="stopBulkPdf()" class="btn btn-sm btn-outline" style="padding:3px 10px;font-size:11px;color:#fff;border-color:rgba(255,255,255,0.35);">Stop</button>
@@ -17221,11 +17232,22 @@
                 <div id="bulkPdfPanelSub" style="opacity:.8;"></div>
                 <div style="height:5px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden;">
                     <div id="bulkPdfPanelBar" style="height:100%;width:0%;background:var(--accent, #f59e0b);transition:width .25s;"></div>
+                </div>
                 </div>`;
             document.body.appendChild(el);
             document.body.classList.add('pdf-busy-bulk');
             document.body.classList.remove('pdf-busy');
             document.getElementById('qnaPdfProgressBadge')?.remove();
+            // Show once, then slide away to the right while the work continues.
+            // Tapping the thin tab brings it back for a few seconds (Stop is in there).
+            let collapseTimer = null;
+            const collapse = () => { el.classList.add('collapsed'); document.body.classList.remove('pdf-busy-bulk'); };
+            const peek = () => {
+                el.classList.remove('collapsed'); document.body.classList.add('pdf-busy-bulk');
+                clearTimeout(collapseTimer); collapseTimer = setTimeout(collapse, 4000);
+            };
+            el.addEventListener('click', e => { if (el.classList.contains('collapsed')) { e.stopPropagation(); peek(); } });
+            collapseTimer = setTimeout(collapse, 3000);
         }
         function stopBulkPdf() {
             bulkPdfCancelRequested = true;
