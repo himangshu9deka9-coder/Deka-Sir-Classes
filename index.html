@@ -483,6 +483,57 @@
         // test whose metadata actually changed; only a test whose
         // .questions content itself changed gets its (potentially
         // large) questions/answerKey subcollections rewritten.
+        // Re-creates tests whose own document is missing from Firestore (their
+        // questions may still be sitting underneath as "This document does not
+        // exist"). `tests` = the full list from Sheets. Only missing tests are
+        // touched, so it costs few writes (free plan: 20,000 writes/day).
+        window.repairFirestoreTests = async function (tests, onProgress, shouldStop) {
+            const dbRef = window.db;
+            const stripUndefined = o => JSON.parse(JSON.stringify(o));
+            const out = { total: 0, repaired: 0, questionsRewritten: 0, failed: [], stoppedEarly: false };
+            const snap = await getDocs(collection(dbRef, 'tests'));
+            const have = new Set(snap.docs.map(d => d.id));
+            const missing = tests.filter(t => t && typeof t.id === 'string' && t.id && !have.has(t.id));
+            out.total = missing.length;
+            for (let n = 0; n < missing.length; n++) {
+                if (shouldStop && shouldStop()) { out.stoppedEarly = true; break; }
+                const t = missing[n];
+                if (onProgress) onProgress(n, missing.length, t.title);
+                try {
+                    const { questions, ...meta } = t;
+                    // 1) the parent document, on its own
+                    const pb = writeBatch(dbRef);
+                    pb.set(doc(dbRef, 'tests', t.id), stripUndefined(meta));
+                    await pb.commit();
+                    out.repaired++;
+                    // 2) questions/answerKey: only rewrite if what is there doesn't match
+                    const qs = questions || [];
+                    if (qs.length) {
+                        const [qSnap, aSnap] = await Promise.all([
+                            getDocs(collection(dbRef, 'tests', t.id, 'questions')),
+                            getDocs(collection(dbRef, 'tests', t.id, 'answerKey'))
+                        ]);
+                        if (qSnap.size !== qs.length || aSnap.size !== qs.length) {
+                            let b = writeBatch(dbRef), c = 0;
+                            for (let i = 0; i < qs.length; i++) {
+                                const { correctAnswer, ...pub } = qs[i] || {};
+                                b.set(doc(dbRef, 'tests', t.id, 'questions', 'q' + i), stripUndefined({ order: i, ...pub }));
+                                b.set(doc(dbRef, 'tests', t.id, 'answerKey', 'q' + i), stripUndefined({ correctAnswer: correctAnswer ?? null }));
+                                c += 2;
+                                if (c >= 400) { await b.commit(); b = writeBatch(dbRef); c = 0; }
+                            }
+                            if (c) await b.commit();
+                            out.questionsRewritten++;
+                        }
+                    }
+                } catch (err) {
+                    out.failed.push((t.title || t.id) + ' (' + (err?.code || err?.message || 'error') + ')');
+                    if (err?.code === 'resource-exhausted') { out.stoppedEarly = true; break; }
+                }
+            }
+            return out;
+        };
+
         window.syncContentToFirestore = async function (opts) {
             const {
                 mergedTests, mergedMaterials, mergedFolders, mergedVideos, mergedCourses,
@@ -497,9 +548,10 @@
             let ops = 0;
             async function flush() {
                 if (ops > 0) {
-                    await batch.commit();
-                    batch = writeBatch(dbRef);
+                    const failing = batch;
+                    batch = writeBatch(dbRef); // start clean either way, so one bad batch can't block every write after it
                     ops = 0;
+                    await failing.commit();
                 }
             }
             async function noteOp(n) {
@@ -598,12 +650,21 @@
                 const { questions, ...meta } = test;
                 const baselineEntry = baselineTestsById.get(test.id);
                 const baselineMeta = baselineEntry ? (({ questions: _q, ...m }) => m)(baselineEntry) : null;
+                let parentOk = true;
                 if (!baselineMeta || JSON.stringify(baselineMeta) !== JSON.stringify(meta)) {
+                    // Commit the test's own document BEFORE any of its questions
+                    // (and on its own), so a question can never exist without its
+                    // parent — that is what produced the "This document does not
+                    // exist" mocks that vanished from the student side.
+                    parentOk = false;
                     await safeWrite('tests/' + test.id + ' (metadata)', async () => {
                         batch.set(doc(dbRef, 'tests', test.id), stripUndefined(meta));
-                        await noteOp(1);
+                        ops += 1;
+                        await flush();
+                        parentOk = true;
                     });
                 }
+                if (!parentOk) continue;
 
                 const prevQuestions = (baselineEntry && baselineEntry.questions) || [];
                 const questionsChanged = questions && questions.length &&
@@ -636,18 +697,21 @@
             }
             for (const [id, baselineEntry] of baselineTestsById) {
                 if (!mergedTestsById.has(id)) {
+                    (window.__recentlyDeletedTestIds = window.__recentlyDeletedTestIds || new Map()).set(id, Date.now());
+                    // Children first, parent last — and list what is REALLY there. The old
+                    // code trusted baselineEntry.questions.length, which is 0 for any test
+                    // this session never opened, so the parent was deleted but all its
+                    // questions were left behind as orphans.
+                    for (const sub of ['questions', 'answerKey']) {
+                        await safeWrite('delete tests/' + id + '/' + sub, async () => {
+                            const subSnap = await getDocs(collection(dbRef, 'tests', id, sub));
+                            for (const d of subSnap.docs) { batch.delete(d.ref); await noteOp(1); }
+                        });
+                    }
                     await safeWrite('delete tests/' + id, async () => {
                         batch.delete(doc(dbRef, 'tests', id));
                         await noteOp(1);
                     });
-                    const oldCount = (baselineEntry.questions || []).length;
-                    for (let i = 0; i < oldCount; i++) {
-                        await safeWrite('delete tests/' + id + '/questions+answerKey/q' + i, async () => {
-                            batch.delete(doc(dbRef, 'tests', id, 'questions', 'q' + i));
-                            batch.delete(doc(dbRef, 'tests', id, 'answerKey', 'q' + i));
-                            await noteOp(2);
-                        });
-                    }
                 }
             }
             await flush();
@@ -4927,6 +4991,7 @@
                     <button class="btn btn-accent btn-sm" onclick="openCreateFolderModal(currentTestFolderId, 'test')"><i class="fas fa-folder-plus"></i> Folder</button>
                     <button class="btn btn-outline btn-sm" onclick="cleanUpQnaPdfDrive()" title="Finds and deletes Q&A PDFs sitting in Drive that no test actually references anymore — e.g. orphaned by deleting/editing a test after its PDF was cached"><i class="fas fa-broom"></i> Clean Up PDF Drive</button>
                     <button class="btn btn-outline btn-sm" onclick="organizeAndCleanQuestionImages()" title="Sorts every mock's question images into Question Answer Image / folder / mock / Question N and deletes images nothing uses"><i class="fas fa-images"></i> Organize Images</button>
+                    <button class="btn btn-outline btn-sm" onclick="repairFirestoreMissingMocks()" title="Re-create mocks that exist in Sheets but are missing from the student database (Firestore)"><i class="fas fa-screwdriver-wrench"></i> Repair Firestore</button>
                 </div>
             </div>
 
@@ -5878,6 +5943,21 @@
                         t.questions = prevQuestionsById[t.id];
                     }
                 });
+                // Sheets is the source of truth. If Firestore is MISSING mocks that Sheets still has
+                // (a test document that got lost from Firestore), keep showing them instead of
+                // letting them vanish a few seconds after load, and tell the admin to repair.
+                if (firestoreContent && result.success && Array.isArray(result.tests)) {
+                    const haveIds = new Set(newTests.map(t => t.id));
+                    const recentlyDeleted = window.__recentlyDeletedTestIds || new Map();
+                    const sheetsNorm = normalizeFolderRefs(result.tests, result.materials || [], result.folders || [], result.videos || []);
+                    const missingTests = sheetsNorm.tests.filter(t => t && t.id && !haveIds.has(t.id) &&
+                        !(recentlyDeleted.has(t.id) && Date.now() - recentlyDeleted.get(t.id) < 600000));
+                    window.firestoreMissingTestIds = missingTests.map(t => t.id);
+                    if (missingTests.length) {
+                        missingTests.forEach(t => newTests.push({ questions: [], ...t }));
+                        if (currentUser?.role === 'admin') warnFirestoreStale('⚠️ ' + missingTests.length + ' mock(s) exist in Sheets but are missing from the student database — open Mock Tests and tap "Repair Firestore".');
+                    }
+                }
                 // Edits Firestore hasn't confirmed yet win over its stale copy —
                 // otherwise this refresh would put the OLD value back on screen.
                 if (firestorePendingTests.size) {
@@ -10323,6 +10403,35 @@
         // this jumps straight to the right one. Uses the SAME "default"
         // named database as the rest of the app (see window.db's setup
         // comment at the top of this file).
+        // Admin tool: re-creates mocks that exist in Sheets but whose document is missing in Firestore.
+        async function repairFirestoreMissingMocks() {
+            if (!currentUser || currentUser.role !== 'admin') return;
+            if (!window.repairFirestoreTests) { showToast('Firestore is not ready yet — try again in a moment', 'error'); return; }
+            if (!confirm('Repair Firestore\n\nFinds mocks that exist in Google Sheets but are missing from the student database (Firestore) and re-creates only those. It uses very few writes. Continue?')) return;
+            bulkPdfCancelRequested = false;
+            try {
+                if (!(await ensureAdminFirebaseSession())) { showToast('Your admin session with Firestore has expired — log out and in again, then retry', 'error'); return; }
+                updateBulkPdfPanel('Repairing Firestore...', 'Reading mocks from Sheets', 3);
+                const fresh = await apiGet('full=1', 60000);
+                if (!fresh || !fresh.success) throw new Error((fresh && fresh.error) || 'Could not read from Sheets');
+                const norm = normalizeFolderRefs(fresh.tests, fresh.materials, fresh.folders, fresh.videos);
+                const r = await window.repairFirestoreTests(norm.tests,
+                    (i, total, title) => updateBulkPdfPanel('Repairing Firestore...', (i + 1) + ' of ' + total + ': ' + (title || ''), (i / Math.max(1, total)) * 100),
+                    () => bulkPdfCancelRequested);
+                closeBulkPdfPanel();
+                if (!r.total) { showToast('✅ Nothing to repair — every mock is already in Firestore', 'success'); }
+                else if (r.failed.length) {
+                    showToast('⚠️ Repaired ' + r.repaired + ' of ' + r.total + '. Problem: ' + r.failed.slice(0, 2).join('; ') + (r.stoppedEarly ? ' — stopped (Firestore daily write limit?)' : ''), 'error');
+                } else {
+                    showToast('✅ Repaired ' + r.repaired + ' mock(s)' + (r.questionsRewritten ? ' (' + r.questionsRewritten + ' needed their questions rewritten)' : ''), 'success');
+                }
+                syncFromServer(true);
+            } catch (err) {
+                closeBulkPdfPanel();
+                showToast('Repair stopped: ' + (err.message || err), 'error');
+            }
+        }
+
         function openTestInFirestore(testId) {
             const url = 'https://console.firebase.google.com/project/deka-sir-classes-b5e95/firestore/databases/default/data/~2Ftests~2F' + encodeURIComponent(testId);
             window.open(url, '_blank');
