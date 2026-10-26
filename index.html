@@ -4815,6 +4815,7 @@
             <h3><i class="fas fa-mobile-screen-button" style="color:var(--accent);"></i> Install the app</h3>
             <div class="ih-sub" id="installHelpSub"></div>
             <ol id="installHelpSteps"></ol>
+            <div id="installCheck" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:12px;background:var(--glass-bg);border:1px solid var(--glass-border);font-size:12px;line-height:1.7;"></div>
             <button class="btn btn-primary btn-block" onclick="closeInstallHelp()">Got it</button>
         </div>
     </div>
@@ -14632,6 +14633,50 @@
             document.getElementById('installHelpSub').textContent = ios ? 'On iPhone/iPad it only takes a few taps:' : 'Your browser installs it from the menu:';
             document.getElementById('installHelpSteps').innerHTML = steps.map(t => `<li><span>${t}</span></li>`).join('');
             document.getElementById('installHelpOverlay').classList.add('open');
+            document.getElementById('installCheck').style.display = 'none';
+            runInstallCheck();
+        }
+        // Why didn't the browser offer a one-tap install? Checks the usual causes
+        // and shows them in the help sheet (Android / desktop only).
+        async function runInstallCheck() {
+            const box = document.getElementById('installCheck');
+            if (!box || isIOSDevice()) return;
+            const rows = [];
+            const ok = (good, text) => rows.push((good ? '✅ ' : '❌ ') + text);
+            box.style.display = 'block';
+            box.innerHTML = '🔎 Checking why one-tap install isn\'t available...';
+            const ua = navigator.userAgent;
+            const inApp = /; wv\)|FBAN|FBAV|Instagram|Line\/|WhatsApp|Telegram/i.test(ua);
+            ok(location.protocol === 'https:', 'Secure (https) connection');
+            ok(!inApp, inApp ? 'Opened inside another app — open it in Chrome instead' : 'Real browser (not an in-app browser)');
+            ok(/Chrome|CriOS|EdgA|SamsungBrowser/i.test(ua) && !/Firefox/i.test(ua), 'Browser supports app install');
+            try {
+                const link = document.querySelector('link[rel="manifest"]');
+                if (!link) { ok(false, 'No manifest linked'); }
+                else {
+                    const r = await fetch(link.href, { cache: 'no-store' });
+                    if (!r.ok) throw new Error('manifest.json returned ' + r.status);
+                    const m = await r.json();
+                    ok(!!(m.name || m.short_name), 'Manifest has a name');
+                    ok(!!m.start_url, 'Manifest has a start_url');
+                    ok(['standalone', 'fullscreen', 'minimal-ui'].includes(m.display), 'Manifest display is "' + (m.display || 'missing') + '" (needs standalone)');
+                    const sizes = (m.icons || []).map(i => String(i.sizes || '')).join(' ');
+                    ok(/\b192x192\b/.test(sizes), '192×192 icon in manifest');
+                    ok(/\b512x512\b/.test(sizes), '512×512 icon in manifest');
+                }
+            } catch (err) { ok(false, 'Could not read manifest.json (' + (err.message || err) + ')'); }
+            try {
+                const reg = await navigator.serviceWorker?.getRegistration();
+                ok(!!reg, reg ? 'Service worker registered' : 'Service worker NOT registered (sw.js missing or failing)');
+            } catch (_) { ok(false, 'Service worker unavailable'); }
+            try {
+                if (navigator.getInstalledRelatedApps) {
+                    const apps = await navigator.getInstalledRelatedApps();
+                    if (apps.length) ok(false, 'The app is already installed on this phone — open it from your home screen / app drawer');
+                }
+            } catch (_) {}
+            rows.push('ℹ️ If you installed it before (or the Android app), Chrome hides "Install" — check the ⋮ menu: it will say <b>Open app</b> instead.');
+            box.innerHTML = rows.join('<br>');
         }
         function closeInstallHelp() { document.getElementById('installHelpOverlay').classList.remove('open'); }
 
